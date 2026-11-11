@@ -1,0 +1,66 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+*.pdb
+*.ilk
+*.exp
+*.lib
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IDE
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+.cursor/
+
+# Flutter / Dart / Pub
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# Nested / accidental Flutter platform trees (本仓仅 Windows)
+/android/
+/ios/
+/linux/
+/macos/
+/web/
+windows/build/
+windows/.dart_tool/
+
+# Bootstrap download cache (zip 上百 MB，勿入库)
+/tool_winbootstrap/.cache/
+/tool/.cache/
+
+# One-off local strip helpers
+/tool/_strip_fgs_locator.*
+
+# Local docs scratch (Android 旧稿，不入库)
+/docs_old/
+/doc/
+
+# Local debug / packaging output
+*.tmp
+*.temp
+/installer/
+/packaging/windows/output/
