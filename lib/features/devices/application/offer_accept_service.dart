@@ -122,11 +122,9 @@ class OfferAcceptService {
   /// 选文件 → 创建本机 offer 任务 + 出站聊天行 → 尽量推送给对端。
   ///
   /// 不在发送前整文件 hash（OTG 友好）；完整提供 payload 时流式算摘要。
-  /// [mediaAssetIdByPath]：相册 AssetEntity.id，用于系统缩略图作视频封面。
   Future<List<TransferTask>> sendFiles({
     required String peerFingerprint,
     required List<File> files,
-    Map<String, String>? mediaAssetIdByPath,
   }) async {
     final created = <TransferTask>[];
     for (final file in files) {
@@ -176,12 +174,8 @@ class OfferAcceptService {
         if (ok) await _session.send(event);
       }
 
-      final assetId = mediaAssetIdByPath?[file.path];
-      ChatOfferPoster.rememberMediaAssetId(task.id, assetId);
       unawaited(
-        _poster
-            .ensureLocalPoster(task: task, mediaAssetId: assetId)
-            .then((_) => _notify()),
+        _poster.ensureLocalPoster(task: task).then((_) => _notify()),
       );
     }
     await _onOutboxChanged?.call();

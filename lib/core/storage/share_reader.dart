@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'app_paths.dart';
 import 'storage_root.dart';
 import 'storage_root_store.dart';
 
@@ -69,7 +70,7 @@ class ShareReader {
           rootId: root.id,
           rootDisplayName: root.displayName,
           fileName: name,
-          relativePath: rel.replaceAll('\\', '/'),
+          relativePath: AppPaths.portable(rel),
           absolutePath: entity.path,
           sizeBytes: isDir ? 0 : stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
@@ -140,9 +141,10 @@ class ShareReader {
   }
 
   static bool _isSafeRelative(String relativePath) {
-    if (relativePath.contains('..')) return false;
-    if (relativePath.contains('\\')) return false;
-    if (relativePath.startsWith('/')) return false;
+    final rel = AppPaths.portable(relativePath);
+    if (rel.isEmpty) return false;
+    if (rel.contains('..')) return false;
+    if (rel.startsWith('/')) return false;
     return true;
   }
 }

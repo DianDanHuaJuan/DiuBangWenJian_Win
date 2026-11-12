@@ -426,12 +426,13 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   }
 
   Future<void> selectExternalVolume(StorageVolumeInfo volume) async {
+    final volPath = ExternalVolumeBrowser.normalizePath(volume.path);
     emit(
       state.copyWith(
         surface: LocalBrowseSurface.external,
-        externalVolumePath: volume.path,
+        externalVolumePath: volPath,
         path: '',
-        rootId: _externalBrowser.rootIdFor(volume.path),
+        rootId: _externalBrowser.rootIdFor(volPath),
         rootDisplayName:
             volume.description.isEmpty ? '外置存储' : volume.description,
         selectionMode: false,
@@ -477,7 +478,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
 
     final label = vols
         .firstWhere(
-          (v) => v.path == volPath,
+          (v) => _externalBrowser.isSameVolumePath(v.path, volPath!),
           orElse: () => vols.first,
         )
         .description;
@@ -492,7 +493,9 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
           FileEntry(
             name: v.description.isEmpty ? v.path : v.description,
             relativePath: '',
-            rootId: _externalBrowser.rootIdFor(v.path),
+            rootId: v.rootId.isNotEmpty
+                ? v.rootId
+                : _externalBrowser.rootIdFor(v.path),
             rootDisplayName: '外置存储',
             isDirectory: true,
             sizeBytes: 0,
@@ -778,21 +781,26 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     if (!entry.isDirectory) return;
     if (state.isExternalSurface) {
       final volPath = _externalBrowser.volumePathFromRootId(entry.rootId);
-      // 多卷列表点入某一卷。
+      // 多卷列表点入某一卷（路径比较兼容 C:\ / C:/）。
       if (volPath != null &&
           entry.relativePath.isEmpty &&
           state.externalVolumePath == null) {
         StorageVolumeInfo? vol;
         for (final v in state.externalVolumes) {
-          if (v.path == volPath) {
+          if (_externalBrowser.isSameVolumePath(v.path, volPath)) {
             vol = v;
             break;
           }
         }
-        if (vol != null) {
-          await selectExternalVolume(vol);
-          return;
-        }
+        vol ??= StorageVolumeInfo(
+          path: volPath,
+          description: entry.name,
+          isPrimary: false,
+          isRemovable: false,
+          writable: true,
+        );
+        await selectExternalVolume(vol);
+        return;
       }
     }
     emit(

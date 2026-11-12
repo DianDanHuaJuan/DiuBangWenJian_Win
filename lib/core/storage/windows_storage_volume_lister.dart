@@ -13,9 +13,10 @@ class WindowsStorageVolumeLister implements StorageVolumeLister {
     final out = <StorageVolumeInfo>[];
     for (var code = 65; code <= 90; code++) {
       final letter = String.fromCharCode(code);
-      final root = '$letter:\\';
+      // 对外统一 `C:/`，避免 `C:\` 在 URL/rootId 与比较时踩坑。
+      final root = '$letter:/';
       try {
-        final dir = Directory(root);
+        final dir = Directory('$letter:\\');
         if (!await dir.exists()) continue;
         var writable = true;
         try {
@@ -27,8 +28,9 @@ class WindowsStorageVolumeLister implements StorageVolumeLister {
           StorageVolumeInfo(
             path: root,
             description: '本地磁盘 ($letter:)',
+            // 对安卓客户端：isPrimary=false 且 isRemovable=true 才会当「外置」展示/进入。
             isPrimary: false,
-            isRemovable: false,
+            isRemovable: true,
             writable: writable,
             state: 'mounted',
           ),

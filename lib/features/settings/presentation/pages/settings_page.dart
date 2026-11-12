@@ -12,6 +12,7 @@ import '../../../../core/common/app_exception.dart';
 import '../../../../core/desktop/desktop_runtime_controller.dart';
 import '../../../../core/identity/device_identity_service.dart';
 import '../../../../core/platform/app_platform.dart';
+import '../../../../core/storage/app_paths.dart';
 import '../../../../core/storage/storage_path_policy.dart';
 import '../../../../core/storage/storage_root.dart';
 import '../../../../core/storage/storage_root_store.dart';
@@ -164,7 +165,8 @@ class _ShareLocationSheetState extends State<_ShareLocationSheet> {
   String? _defaultPath;
 
   /// `/Download` 之前的部分，输入框里不显示。
-  String _downloadPrefix = '/storage/emulated/0/';
+  String _downloadPrefix =
+      AppPlatform.isWindows ? '' : '/storage/emulated/0/';
 
   late final TextEditingController _pathController;
   late final FocusNode _pathFocus;
@@ -241,7 +243,8 @@ class _ShareLocationSheetState extends State<_ShareLocationSheet> {
 
   String _absoluteFromField(String field) {
     final text = _normPath(field);
-    if (text.isEmpty || text.startsWith('/')) return text;
+    if (text.isEmpty || _isAbsoluteStoragePath(text)) return text;
+    if (_downloadPrefix.isEmpty) return text;
     final prefix = _downloadPrefix.endsWith('/')
         ? _downloadPrefix
         : '$_downloadPrefix/';
@@ -305,18 +308,20 @@ class _ShareLocationSheetState extends State<_ShareLocationSheet> {
       return;
     }
     if (!await _ensureManageStorage()) return;
-    await _runSwitch(() => serviceLocator.switchShareRoot().toDirectory(path));
+    await _runSwitch(
+      () => serviceLocator.switchShareRoot().toDirectory(AppPaths.native(path)),
+    );
   }
 
   /// 应用前只接受已存在、可识别的绝对目录，不替用户新建路径。
   Future<String?> _pathProblem(String path) async {
     if (path.isEmpty) return '请输入目录路径';
-    if (!path.startsWith('/')) return '路径无法对应到真实目录';
+    if (!_isAbsoluteStoragePath(path)) return '路径无法对应到真实目录';
     if (isAppPrivateStoragePath(path)) return '禁止使用应用私有目录';
     if (await isStorageVolumeRoot(path)) {
       return '不能将存储介质的根目录设为存储位置，请选择根目录下的子文件夹。';
     }
-    final type = await FileSystemEntity.type(path);
+    final type = await FileSystemEntity.type(AppPaths.native(path));
     if (type == FileSystemEntityType.notFound) return '目录不存在';
     if (type != FileSystemEntityType.directory) return '这不是文件夹';
     return null;
@@ -497,12 +502,16 @@ class _FloatPathButton extends StatelessWidget {
   }
 }
 
-String _normPath(String path) {
-  var value = path.trim().replaceAll('\\', '/');
-  while (value.length > 1 && value.endsWith('/')) {
-    value = value.substring(0, value.length - 1);
+String _normPath(String path) => AppPaths.portable(path);
+
+bool _isAbsoluteStoragePath(String path) {
+  final n = AppPaths.portable(path);
+  if (n.startsWith('/')) return true;
+  if (AppPlatform.isWindows) {
+    if (RegExp(r'^[A-Z]:/').hasMatch(n)) return true;
+    if (n.startsWith('//')) return true;
   }
-  return value;
+  return false;
 }
 
 /// 从 `Download` 起显示，去掉它前面的存储根。

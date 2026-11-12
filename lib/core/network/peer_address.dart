@@ -73,6 +73,26 @@ class PeerAddress {
     return PeerAddress(host: h, port: port).formatted;
   }
 
+  /// 入站已认证 HTTPS 探活：用 TCP 源 IP 合成拨号串。
+  ///
+  /// 若 [lastSeenAddress] 的 host 与 [remoteIp] 相同则沿用其 port，
+  /// 否则使用 [defaultPort]（协议默认宿主端口）。
+  static String? dialFromInboundPing({
+    required String? remoteIp,
+    String? lastSeenAddress,
+    int defaultPort = 5244,
+  }) {
+    final host = preferIpv4(remoteIp);
+    if (host == null) return null;
+    var port = defaultPort;
+    final known = tryParse(lastSeenAddress);
+    if (known != null &&
+        preferIpv4(known.host)?.toLowerCase() == host.toLowerCase()) {
+      port = known.port;
+    }
+    return format(host, port);
+  }
+
   /// 优先保留可用 IPv4；空 / 占位地址 → null。
   static String? preferIpv4(String? ip) {
     if (ip == null) return null;

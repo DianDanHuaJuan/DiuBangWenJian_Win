@@ -53,8 +53,6 @@ windows/.dart_tool/
 /tool/.cache/
 
 # One-off local strip helpers
-/tool/_strip_fgs_locator.*
-
 # Local docs scratch (Android 旧稿，不入库)
 /docs_old/
 /doc/

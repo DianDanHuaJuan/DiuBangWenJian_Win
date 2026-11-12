@@ -216,13 +216,30 @@ class DiscoveryService {
     RawDatagramSocket? socket;
     try {
       await _lock.acquire();
-      socket = await _socketFactory(
-        InternetAddress.anyIPv4,
-        discoveryPort,
-      ).timeout(const Duration(seconds: 5));
-      socket.joinMulticast(
-        InternetAddress(discoveryMulticastAddress),
-      );
+      final bindAddress = _bindAddress();
+      try {
+        socket = await _socketFactory(
+          bindAddress,
+          discoveryPort,
+        ).timeout(const Duration(seconds: 5));
+      } catch (error) {
+        if (bindAddress.address == InternetAddress.anyIPv4.address) rethrow;
+        AppLogger.log(
+          'UDP bind preferred address failed, fallback any',
+          scope: 'discovery',
+          error: error,
+          details: {'address': bindAddress.address},
+        );
+        socket = await _socketFactory(
+          InternetAddress.anyIPv4,
+          discoveryPort,
+        ).timeout(const Duration(seconds: 5));
+      }
+      final joined = await _joinLanMulticast(socket);
+      if (joined.isEmpty && !Platform.isWindows) {
+        socket.joinMulticast(InternetAddress(discoveryMulticastAddress));
+      }
+      _pinMulticastInterface(socket);
       socket.listen((event) {
         final live = _socket;
         if (live == null || event != RawSocketEvent.read) return;
@@ -249,6 +266,7 @@ class DiscoveryService {
         }
       });
       _transportFailed = false;
+      final boundAddress = socket.address.address;
       _socket = socket;
       socket = null;
 
@@ -260,6 +278,8 @@ class DiscoveryService {
           'multicast': discoveryMulticastAddress,
           'selfHost': self().host,
           'selfPort': self().port,
+          'bind': boundAddress,
+          'joined': joined,
           'announceEnabled': _announceEnabled,
         },
       );
@@ -325,6 +345,7 @@ class DiscoveryService {
     if (!_announceEnabled) return;
     final socket = _socket;
     if (socket == null) return;
+    _pinMulticastInterface(socket);
     final payload = self();
     if (payload.fingerprint.isEmpty) return;
     if (!_isUsableHost(payload.host)) {
@@ -460,6 +481,81 @@ class DiscoveryService {
 
   bool _isUsableHost(String host) =>
       host.isNotEmpty && host != '0.0.0.0' && host != '::';
+
+  /// Windows 绑到选定局域网地址，避免 Meta/Hyper-V 成为组播出口。
+  InternetAddress _bindAddress() {
+    if (!Platform.isWindows) return InternetAddress.anyIPv4;
+    final host = self().host;
+    final parsed = InternetAddress.tryParse(host);
+    if (parsed == null ||
+        parsed.type != InternetAddressType.IPv4 ||
+        !_isUsableHost(host)) {
+      return InternetAddress.anyIPv4;
+    }
+    return parsed;
+  }
+
+  /// 只加入当前选定地址所在的网卡，与二维码 / 宿主绑定保持一致。
+  Future<List<String>> _joinLanMulticast(RawDatagramSocket socket) async {
+    final group = InternetAddress(discoveryMulticastAddress);
+    if (!Platform.isWindows) {
+      socket.joinMulticast(group);
+      return const ['default'];
+    }
+    final host = self().host;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: true,
+      );
+      for (final interface in interfaces) {
+        final owns = interface.addresses.any(
+          (address) => address.address == host,
+        );
+        if (!owns) continue;
+        socket.joinMulticast(group, interface);
+        return [interface.name];
+      }
+    } catch (error) {
+      AppLogger.log(
+        'join selected interface failed',
+        scope: 'discovery',
+        error: error,
+        details: {'host': host},
+      );
+    }
+    AppLogger.log(
+      'selected interface not found for multicast',
+      scope: 'discovery',
+      details: {'host': host},
+    );
+    return const [];
+  }
+
+  /// Windows `IP_MULTICAST_IF`：后续组播从选定 IPv4 发出。
+  void _pinMulticastInterface(RawDatagramSocket socket) {
+    if (!Platform.isWindows) return;
+    final host = self().host;
+    final parsed = InternetAddress.tryParse(host);
+    if (parsed == null ||
+        parsed.type != InternetAddressType.IPv4 ||
+        parsed.rawAddress.length != 4 ||
+        !_isUsableHost(host)) {
+      return;
+    }
+    try {
+      socket.setRawOption(
+        RawSocketOption(RawSocketOption.levelIPv4, 9, parsed.rawAddress),
+      );
+    } catch (error) {
+      AppLogger.log(
+        'pin multicast interface failed',
+        scope: 'discovery',
+        error: error,
+        details: {'host': host},
+      );
+    }
+  }
 
   int _now() =>
       nowMillis?.call() ?? DateTime.now().millisecondsSinceEpoch;

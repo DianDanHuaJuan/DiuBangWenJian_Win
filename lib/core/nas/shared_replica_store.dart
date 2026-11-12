@@ -30,23 +30,4 @@ class SharedReplicaStore {
     }
     return next;
   }
-
-  Future<void> applyRemote({
-    required int generation,
-    required String reason,
-  }) async {
-    if (generation > 0 && generation <= _localGeneration) {
-      return;
-    }
-    await _kv.reload();
-    final diskGen = _kv.getInt(generationKey) ?? 0;
-    if (diskGen < _localGeneration) {
-      return;
-    }
-    _localGeneration = diskGen > generation ? diskGen : generation;
-    final hook = onApply;
-    if (hook != null) {
-      await hook(reason);
-    }
-  }
 }

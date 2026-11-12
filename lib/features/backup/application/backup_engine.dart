@@ -69,9 +69,12 @@ class BackupEngine extends ChangeNotifier {
       _peers.onlinePaired.where((p) => p.nasService).toList(growable: false);
 
   /// 开始新备份；若已有未完成 Run 则拒绝。
+  ///
+  /// [sourceDirectory]：Windows 自选源文件夹（定案 Q16）；为空则无法扫描。
   Future<String?> startNewBackup({
     required String peerFingerprint,
     required String peerName,
+    required String sourceDirectory,
   }) async {
     await bootstrap();
     final existing = await _store.findActiveRun();
@@ -89,12 +92,25 @@ class BackupEngine extends ChangeNotifier {
       return _lastError;
     }
 
-    final scanned = await _picker.loadAllMediaFiltered(
+    final root = sourceDirectory.trim();
+    if (root.isEmpty) {
+      _lastError = '请选择要备份的文件夹';
+      notifyListeners();
+      return _lastError;
+    }
+    if (!await Directory(root).exists()) {
+      _lastError = '备份源文件夹不存在';
+      notifyListeners();
+      return _lastError;
+    }
+
+    final scanned = await _picker.loadMediaFromDirectory(
+      root,
       includeImages: true,
       includeVideos: true,
     );
     if (scanned.items.isEmpty) {
-      _lastError = '未找到可备份的图片或视频';
+      _lastError = '该文件夹中未找到可备份的图片或视频';
       notifyListeners();
       return _lastError;
     }

@@ -51,15 +51,6 @@ class _DevicePairViewState extends State<_DevicePairView> {
     _port = parsed?.port ?? defaultHostPort;
   }
 
-  Future<void> _openScanner() async {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Windows 版暂不支持摄像头扫码，请使用密码配对'),
-      ),
-    );
-  }
-
   Future<void> _showPasswordDialog() async {
     if (_host.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,23 +118,6 @@ class _DevicePairViewState extends State<_DevicePairView> {
             fontWeight: FontWeight.w700,
             ),
         );
-        final outlinedStyle = OutlinedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: overviewPrimary,
-          disabledBackgroundColor: Colors.white,
-          disabledForegroundColor: overviewPrimary.withValues(alpha: 0.45),
-          minimumSize: const Size.fromHeight(48),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          side: const BorderSide(color: overviewPrimary),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          textStyle: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            ),
-        );
-
         return Scaffold(
           backgroundColor: const Color(0xFFF5F4F1),
           appBar: AppBar(
@@ -155,7 +129,7 @@ class _DevicePairViewState extends State<_DevicePairView> {
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
               children: [
                 Text(
-                  '请扫描对方连接二维码完成配对；或使用配对密码。',
+                  '请使用对方连接码弹窗中的配对密码完成配对。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         fontSize: 13,
                         color: overviewMuted,
@@ -222,9 +196,8 @@ class _DevicePairViewState extends State<_DevicePairView> {
                   ),
                 ],
                 const SizedBox(height: 22),
-                // 对齐旧客户端：主按钮扫码 + 次按钮密钥（尺寸/字色贴近概览）
                 ElevatedButton.icon(
-                  onPressed: busy ? null : _openScanner,
+                  onPressed: busy ? null : _showPasswordDialog,
                   style: buttonStyle,
                   icon: busy
                       ? const SizedBox(
@@ -235,15 +208,8 @@ class _DevicePairViewState extends State<_DevicePairView> {
                             color: Colors.white,
                           ),
                         )
-                      : const Icon(Icons.qr_code_scanner_rounded, size: 18),
-                  label: Text(busy ? '正在连接…' : '扫描连接二维码'),
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: busy ? null : _showPasswordDialog,
-                  style: outlinedStyle,
-                  icon: const Icon(Icons.lock_outline_rounded, size: 18),
-                  label: const Text('配对密码接入'),
+                      : const Icon(Icons.lock_outline_rounded, size: 18),
+                  label: Text(busy ? '正在连接…' : '配对密码接入'),
                 ),
               ],
             ),

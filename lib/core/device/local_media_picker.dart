@@ -5,7 +5,7 @@ import 'windows_local_media_picker.dart';
 
 export 'local_media_models.dart';
 
-/// 本地媒体多选门面（Windows：系统文件选择器）。
+/// 本地媒体多选门面（Windows：系统文件选择器 / 文件夹扫描）。
 class LocalMediaPicker {
   const LocalMediaPicker();
 
@@ -39,20 +39,20 @@ class LocalMediaPicker {
     );
   }
 
-  /// 备份等场景：Windows 无 MediaStore 全库枚举，返回空（改用文件夹选择）。
-  Future<LocalMediaPickResult> loadAllMedia({
-    bool Function()? shouldCancel,
-    void Function(LocalMediaScanProgress progress)? onProgress,
-  }) async {
-    return const LocalMediaPickResult(items: <PickedLocalMediaItem>[]);
-  }
-
-  Future<LocalMediaPickResult> loadAllMediaFiltered({
+  /// 递归扫描文件夹内图片 / 视频（定案 Q16：备份源为用户自选文件夹）。
+  Future<LocalMediaPickResult> loadMediaFromDirectory(
+    String directoryPath, {
     required bool includeImages,
     required bool includeVideos,
     bool Function()? shouldCancel,
     void Function(LocalMediaScanProgress progress)? onProgress,
-  }) async {
-    return const LocalMediaPickResult(items: <PickedLocalMediaItem>[]);
+  }) {
+    return const WindowsLocalMediaPicker().scanDirectory(
+      directoryPath,
+      includeImages: includeImages,
+      includeVideos: includeVideos,
+      shouldCancel: shouldCancel,
+      onProgress: onProgress,
+    );
   }
 }

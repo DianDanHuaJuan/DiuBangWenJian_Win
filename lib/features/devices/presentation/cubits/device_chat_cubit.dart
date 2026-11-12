@@ -8,7 +8,6 @@ import '../../../../app/di/service_locator.dart';
 import '../../../../core/device/local_pick_facade.dart';
 import '../../../../core/task/transfer_task.dart';
 import '../../application/chat_offer_media_cache.dart';
-import '../../application/chat_offer_poster.dart';
 import '../../application/offer_accept_service.dart';
 import '../../domain/entities/chat_message.dart';
 
@@ -131,18 +130,12 @@ class DeviceChatCubit extends Cubit<DeviceChatState> {
       for (final item in picked.items) File(item.localPath),
     ];
     if (files.isEmpty) return;
-    final assetIds = <String, String>{
-      for (final item in picked.items)
-        if (ChatOfferPoster.isLikelyMediaStoreId(item.id))
-          item.localPath: item.id.trim(),
-    };
 
     emit(state.copyWith(busy: true, clearError: true));
     try {
       await offers.sendFiles(
         peerFingerprint: peerId,
         files: files,
-        mediaAssetIdByPath: assetIds,
       );
       await _reload();
       if (picked.unavailableCount > 0) {

@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
-
+import '../../../core/storage/app_paths.dart';
 import '../../../core/storage/storage_root.dart';
 import '../../../core/storage/storage_root_store.dart';
 
@@ -12,10 +11,11 @@ class SharePathResolver {
   final StorageRootStore _roots;
 
   static bool isUnsafeName(String name) {
-    if (name.isEmpty) return true;
-    if (name.contains('..')) return true;
-    if (name.contains('\\')) return true;
-    if (name.startsWith('/')) return true;
+    final rel = AppPaths.portable(name);
+    if (rel.isEmpty) return true;
+    if (rel.contains('..')) return true;
+    if (rel.startsWith('/')) return true;
+    if (AppPaths.isWindowsDriveRoot(rel) || rel.startsWith('//')) return true;
     return false;
   }
 
@@ -39,12 +39,13 @@ class SharePathResolver {
       return null;
     }
     if (isUnsafeName(relativePath)) return null;
-    final joined = p.normalize(p.join(root.uriOrPath, relativePath));
-    final canonicalRoot = p.normalize(root.uriOrPath);
-    if (!p.isWithin(canonicalRoot, joined) && joined != canonicalRoot) {
+    final rootPortable = AppPaths.portable(root.uriOrPath);
+    final joinedPortable =
+        AppPaths.joinPortable(rootPortable, AppPaths.portable(relativePath));
+    if (!AppPaths.isWithinPortable(rootPortable, joinedPortable)) {
       return null;
     }
-    return File(joined);
+    return File(AppPaths.native(joinedPortable));
   }
 
   Future<Directory?> resolveDir({
@@ -56,13 +57,13 @@ class SharePathResolver {
       return null;
     }
     if (relativePath.isNotEmpty && isUnsafeName(relativePath)) return null;
-    final joined = relativePath.isEmpty
-        ? p.normalize(root.uriOrPath)
-        : p.normalize(p.join(root.uriOrPath, relativePath));
-    final canonicalRoot = p.normalize(root.uriOrPath);
-    if (!p.isWithin(canonicalRoot, joined) && joined != canonicalRoot) {
+    final rootPortable = AppPaths.portable(root.uriOrPath);
+    final joinedPortable = relativePath.isEmpty
+        ? rootPortable
+        : AppPaths.joinPortable(rootPortable, AppPaths.portable(relativePath));
+    if (!AppPaths.isWithinPortable(rootPortable, joinedPortable)) {
       return null;
     }
-    return Directory(joined);
+    return Directory(AppPaths.native(joinedPortable));
   }
 }

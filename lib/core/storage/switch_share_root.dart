@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../common/app_exception.dart';
+import 'app_paths.dart';
 import 'storage_constants.dart';
 import 'storage_path_policy.dart';
 import 'storage_root.dart';
@@ -143,10 +144,7 @@ class SwitchShareRoot {
 
 /// 解析并探测可写共享目录（直接使用所选路径，不套子目录）。
 Future<Directory> resolveWritableShareDir(String selectedPath) async {
-  var path = selectedPath.trim().replaceAll('\\', '/');
-  while (path.length > 1 && path.endsWith('/')) {
-    path = path.substring(0, path.length - 1);
-  }
+  final path = AppPaths.portable(selectedPath);
   if (path.isEmpty) {
     throw const AppException(
       code: 'storage_path_empty',
@@ -154,7 +152,7 @@ Future<Directory> resolveWritableShareDir(String selectedPath) async {
     );
   }
 
-  final dir = Directory(path);
+  final dir = Directory(AppPaths.native(path));
   if (isAppPrivateStoragePath(dir.path)) {
     throw const AppException(
       code: 'storage_private_forbidden',
@@ -178,5 +176,4 @@ Future<Directory> resolveWritableShareDir(String selectedPath) async {
   return dir;
 }
 
-String _norm(String path) =>
-    path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '').toLowerCase();
+String _norm(String path) => AppPaths.portable(path).toLowerCase();

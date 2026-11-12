@@ -187,10 +187,7 @@ class _OfferCardWidgetState extends State<OfferCardWidget> {
     final poster = ChatOfferPoster();
     String? path;
     if (task.type == TransferTaskType.p2pOffer) {
-      path = await poster.ensureLocalPoster(
-        task: task,
-        mediaAssetId: ChatOfferPoster.rememberedMediaAssetId(task.id),
-      );
+      path = await poster.ensureLocalPoster(task: task);
     } else if (task.type == TransferTaskType.p2pDownload) {
       path = await poster.ensureRemotePoster(task);
     }

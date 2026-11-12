@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../common/app_logger.dart';
 import '../file_provider/file_entry.dart';
 import '../transfer/stream_transfer_tuning.dart';
+import 'app_paths.dart';
 import 'incomplete_file.dart';
 import 'storage_volumes.dart';
 
@@ -44,12 +45,21 @@ class ExternalVolumeBrowser {
     return external;
   }
 
-  String rootIdFor(String volumePath) => '$rootIdPrefix${_norm(volumePath)}';
+  String rootIdFor(String volumePath) =>
+      '$rootIdPrefix${normalizePath(volumePath)}';
 
   String? volumePathFromRootId(String rootId) {
     if (!rootId.startsWith(rootIdPrefix)) return null;
-    return rootId.substring(rootIdPrefix.length);
+    final raw = rootId.substring(rootIdPrefix.length);
+    if (raw.isEmpty) return null;
+    return normalizePath(raw);
   }
+
+  /// 路径是否指向同一卷。
+  bool isSameVolumePath(String a, String b) => AppPaths.equals(a, b);
+
+  /// 卷路径 portable 形式（委托 [AppPaths.portable]）。
+  static String normalizePath(String path) => AppPaths.portable(path);
 
   /// [relativePath] 相对卷根；空=卷根。
   Future<List<FileEntry>> listDirectory({
@@ -57,11 +67,12 @@ class ExternalVolumeBrowser {
     required String volumeLabel,
     String relativePath = '',
   }) async {
-    final root = _norm(volumePath);
+    final root = normalizePath(volumePath);
     if (root.isEmpty) return const [];
-    final dirPath = relativePath.isEmpty
-        ? root
-        : p.join(root, relativePath.replaceAll('/', p.separator));
+    final relPortable = AppPaths.portable(relativePath);
+    final dirPath = relPortable.isEmpty
+        ? AppPaths.native(root)
+        : AppPaths.native(AppPaths.joinPortable(root, relPortable));
     final dir = Directory(dirPath);
     if (!await dir.exists()) return const [];
 
@@ -73,9 +84,9 @@ class ExternalVolumeBrowser {
         if (name.startsWith('.')) continue;
         final isDir = entity is Directory;
         if (entity is! File && entity is! Directory) continue;
-        final rel = relativePath.isEmpty
-            ? name
-            : '$relativePath/$name'.replaceAll('\\', '/');
+        final rel = relPortable.isEmpty
+            ? AppPaths.portable(name)
+            : AppPaths.joinPortable(relPortable, name);
         var size = 0;
         var modified = 0;
         try {
@@ -86,7 +97,7 @@ class ExternalVolumeBrowser {
         out.add(
           FileEntry(
             name: name,
-            relativePath: rel.replaceAll('\\', '/'),
+            relativePath: rel,
             rootId: rootId,
             rootDisplayName: volumeLabel,
             isDirectory: isDir,
@@ -97,7 +108,6 @@ class ExternalVolumeBrowser {
         );
       }
     } catch (e, st) {
-      // 典型：无 MES 时 PathAccessException / FileSystemException。
       AppLogger.log(
         'extvol Directory.list failed',
         scope: 'extvol',
@@ -124,9 +134,12 @@ class ExternalVolumeBrowser {
     required String volumePath,
     required String relativePath,
   }) async {
-    final abs = relativePath.isEmpty
-        ? volumePath
-        : p.join(volumePath, relativePath.replaceAll('/', p.separator));
+    final root = normalizePath(volumePath);
+    if (root.isEmpty) return false;
+    final relPortable = AppPaths.portable(relativePath);
+    final abs = relPortable.isEmpty
+        ? AppPaths.native(root)
+        : AppPaths.native(AppPaths.joinPortable(root, relPortable));
     final file = File(abs);
     final dir = Directory(abs);
     try {
@@ -166,26 +179,23 @@ class ExternalVolumeBrowser {
     required Stream<List<int>> stream,
     int? expectedLength,
   }) async {
-    final root = _norm(volumePath);
+    final root = normalizePath(volumePath);
     if (root.isEmpty || !await isVolumeMounted(root)) return null;
-    final dirRel = relativeDir.replaceAll('\\', '/').trim();
-    final baseName = p.basename(fileName.replaceAll('\\', '/')).trim();
+    final dirRel = AppPaths.portable(relativeDir);
+    final baseName = p.basename(AppPaths.portable(fileName)).trim();
     if (baseName.isEmpty ||
         baseName == '.' ||
         baseName == '..' ||
         baseName.contains('\x00')) {
       return null;
     }
-    if (dirRel.contains('..') ||
-        dirRel.startsWith('/') ||
-        dirRel.contains('\x00')) {
+    if (dirRel.contains('..') || dirRel.startsWith('/') || dirRel.contains('\x00')) {
       return null;
     }
-    final dirAbs = dirRel.isEmpty
-        ? root
-        : _norm(p.join(root, dirRel.replaceAll('/', p.separator)));
-    if (dirAbs != root && !dirAbs.startsWith('$root/')) return null;
-    final dir = Directory(dirAbs.replaceAll('/', p.separator));
+    final dirAbsPortable =
+        dirRel.isEmpty ? root : AppPaths.joinPortable(root, dirRel);
+    if (!AppPaths.isWithinPortable(root, dirAbsPortable)) return null;
+    final dir = Directory(AppPaths.native(dirAbsPortable));
     if (!await dir.exists()) return null;
     final stored = await _uniqueFileName(dir, baseName);
     final file = File(p.join(dir.path, stored));
@@ -225,8 +235,7 @@ class ExternalVolumeBrowser {
   /// 卷是否仍挂载（拔盘检测）。
   Future<bool> isVolumeMounted(String volumePath) async {
     final list = await listExternalVolumes();
-    final target = _norm(volumePath);
-    return list.any((v) => _norm(v.path) == target);
+    return list.any((v) => isSameVolumePath(v.path, volumePath));
   }
 
   /// 解析外置卷上的文件；路径必须落在已挂载的非主卷内。
@@ -234,23 +243,20 @@ class ExternalVolumeBrowser {
     required String volumePath,
     required String relativePath,
   }) async {
-    final root = _norm(volumePath);
+    final root = normalizePath(volumePath);
     if (root.isEmpty) return null;
     if (!await isVolumeMounted(root)) return null;
-    final rel = relativePath.replaceAll('\\', '/').trim();
+    final rel = AppPaths.portable(relativePath);
     if (rel.isEmpty ||
         rel.contains('..') ||
         rel.startsWith('/') ||
         rel.contains('\x00')) {
       return null;
     }
-    final abs = _norm(p.join(root, rel.replaceAll('/', p.separator)));
-    if (abs != root && !abs.startsWith('$root/')) return null;
-    final file = File(abs.replaceAll('/', p.separator));
+    final absPortable = AppPaths.joinPortable(root, rel);
+    if (!AppPaths.isWithinPortable(root, absPortable)) return null;
+    final file = File(AppPaths.native(absPortable));
     if (!await file.exists()) return null;
     return file;
   }
-
-  String _norm(String path) =>
-      path.trim().replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
 }

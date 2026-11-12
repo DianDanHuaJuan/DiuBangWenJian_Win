@@ -168,6 +168,7 @@ class ServiceLocator {
 
   int _hostPort = defaultHostPort;
   String? _hostAddress;
+  String _hostInterfaceName = '';
   Future<String>? _addressFuture;
 
   static const _kPreferredIpv4 = 'network.preferred_ipv4';
@@ -252,6 +253,7 @@ class ServiceLocator {
         port: _hostPort,
         securityContext: deviceIdentityService.serverSecurityContext(),
         publicRoutes: router,
+        bindAddress: _preferredBindAddress,
         middlewares: [
           peerFingerprintMiddleware(
             peerLookup: (fingerprint) async =>
@@ -279,6 +281,9 @@ class ServiceLocator {
   /// 同步缓存地址（探测未完成时为回退值；概览展示按需用 [resolvedAddress]）。
   String get hostAddress => _hostAddress ?? hostAddressListenable.value;
 
+  /// 当前选定地址所在网卡名（与 [hostAddress] 同时更新）。
+  String get hostInterfaceName => _hostInterfaceName;
+
   /// 探测完成后的地址（宿主/二维码等需要准确地址的链路 await 此值）。
   Future<String> get resolvedAddress async {
     final future = _addressFuture;
@@ -295,6 +300,7 @@ class ServiceLocator {
   /// 重新探测并选定本机 IP（保留用户偏好，若仍在列表中）。
   Future<String> refreshLocalAddress() async {
     final candidates = await listLocalIpv4Candidates();
+    _ipv4Candidates = candidates;
     final preferred = _keyValueStore?.getString(_kPreferredIpv4);
     late final String chosen;
     if (preferred != null &&
@@ -302,26 +308,93 @@ class ServiceLocator {
         candidates.any((c) => c.address == preferred)) {
       chosen = preferred;
     } else if (candidates.isNotEmpty) {
+      // 列表已按真实局域网优先排序。
       chosen = candidates.first.address;
     } else {
       chosen = '0.0.0.0';
     }
+    final changed = hostAddress != chosen ||
+        hostInterfaceName != _interfaceNameFor(chosen);
     _applyHostAddress(chosen);
+    if (changed && hostAddress != '0.0.0.0') {
+      await _alignBindingsToSelectedAddress();
+    }
     return chosen;
   }
 
-  /// 用户选定用于二维码 / UDP 广播的本机 IP。
-  Future<void> selectLocalAddress(String address) async {
+  /// 用户选定用于二维码 / UDP 广播 / 宿主绑定的本机 IP。
+  Future<void> selectLocalAddress(
+    String address, {
+    String? interfaceName,
+  }) async {
     await _keyValueStore?.setString(_kPreferredIpv4, address);
-    _applyHostAddress(address);
+    _applyHostAddress(address, interfaceName: interfaceName);
     _addressFuture = Future.value(address);
     await sharedReplicaStore().commit(reason: 'preferred_ipv4');
-    await announceNowRouted();
+    await _alignBindingsToSelectedAddress();
   }
 
-  void _applyHostAddress(String address) {
+  /// 宿主监听与组播出口切到当前 [hostAddress]。
+  Future<void> _alignBindingsToSelectedAddress() async {
+    if (!Platform.isWindows) return;
+    await _rebindHostOnAddressChange();
+    try {
+      if (discoveryService().isRunning) {
+        await ensureDiscovery(rebuild: true);
+      }
+    } catch (e, st) {
+      AppLogger.log(
+        'rebind discovery after address change failed',
+        scope: 'discovery',
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  Future<void> _rebindHostOnAddressChange() async {
+    if (!Platform.isWindows) return;
+    final old = _hostService;
+    if (old == null || !old.isRunning) return;
+    try {
+      await old.stop();
+      await old.start();
+    } catch (e, st) {
+      AppLogger.log(
+        'rebind host after address change failed',
+        scope: 'host',
+        error: e,
+        stackTrace: st,
+      );
+    }
+  }
+
+  List<LocalIpv4Candidate> _ipv4Candidates = const [];
+
+  void _applyHostAddress(String address, {String? interfaceName}) {
     _hostAddress = address;
+    _hostInterfaceName = interfaceName ?? _interfaceNameFor(address);
     hostAddressListenable.value = address;
+  }
+
+  String _interfaceNameFor(String address) {
+    for (final candidate in _ipv4Candidates) {
+      if (candidate.address == address) return candidate.interfaceName;
+    }
+    return '';
+  }
+
+  /// Windows 绑到选定局域网 IPv4，避免虚拟网卡 / TUN 抢走回包。
+  InternetAddress? _preferredBindAddress() {
+    if (!Platform.isWindows) return null;
+    final host = hostAddress;
+    final parsed = InternetAddress.tryParse(host);
+    if (parsed == null ||
+        parsed.type != InternetAddressType.IPv4 ||
+        host == '0.0.0.0') {
+      return null;
+    }
+    return parsed;
   }
 
   /// 单库（app.db）：identity v1–v2 + task v3 + chat v4 + stable_id v5 + backup v6 + brand v7 + emoji v8 + 分类下载 v9。
@@ -522,14 +595,7 @@ class ServiceLocator {
   }
 
   ChatUnreadStore chatUnreadStore() {
-    return _chatUnreadStore ??= ChatUnreadStore(
-      onUnreadDelta: (fp, op) {
-        unawaited(_publishUnreadDelta(fp, op));
-      },
-    );
-  }
-
-  Future<void> _publishUnreadDelta(String fingerprint, String op) async {
+    return _chatUnreadStore ??= ChatUnreadStore();
   }
 
   /// 互传编排（懒异步单例）。
@@ -694,7 +760,10 @@ class ServiceLocator {
       );
       router.get(
         PingEndpoint.path,
-        PingEndpoint(identityService: deviceIdentityService).handler,
+        PingEndpoint(
+          identityService: deviceIdentityService,
+          onAuthenticatedInboundPing: _noteInboundAuthenticatedPing,
+        ).handler,
       );
       router.get(
         DeviceInfoEndpoint.path,
@@ -710,6 +779,7 @@ class ServiceLocator {
         port: hostPort,
         securityContext: deviceIdentityService.serverSecurityContext(),
         publicRoutes: router,
+        bindAddress: _preferredBindAddress,
         middlewares: [
           peerFingerprintMiddleware(
             peerLookup: (fingerprint) async =>
@@ -1022,9 +1092,6 @@ class ServiceLocator {
     } catch (_) {}
   }
 
-  /// FGS TaskHandler 注入：enroll 落库后向 UI 发 pairing_settled（仅 FGS isolate）。
-  Future<void> Function(Peer peer)? onFgsPairingSettled;
-
   /// 配对成功收尾：刷新列表、组播宣告（在线靠 UDP announce）。
   Future<void> onPairingSettled(Peer peer) async {
     await refreshPairedPeers();
@@ -1032,13 +1099,9 @@ class ServiceLocator {
     unawaited(ensureTransferStack());
     discoveryService().announceNow();
     peerApiClient().invalidate(peer.fingerprint);
-    final notifyUi = onFgsPairingSettled;
-    if (notifyUi != null) {
-      unawaited(notifyUi(peer));
-    }
   }
 
-  /// 网卡/地址变化：持有发现则 **强制冷启**（T2）；UI+FGS 时转发。
+  /// 网卡/地址变化：持有发现则 **强制冷启**（T2）。
   Future<DiscoveryEnsureResult> healDiscoveryAfterNetworkChange() =>
       forceDiscoveryColdStart(reason: 'network_or_address');
 
@@ -1178,6 +1241,7 @@ class ServiceLocator {
         model: peer.model,
         emoji: peer.emoji,
         address: dial,
+        reason: 'outbound_probe',
       );
       return true;
     } catch (e) {
@@ -1188,6 +1252,69 @@ class ServiceLocator {
         details: {'fp': short, 'dial': peer.lastSeenAddress},
       );
       return false;
+    }
+  }
+
+  /// 入站已认证 /ping → 本机标绿对方（方案 A）；不影响 pong 响应。
+  void _noteInboundAuthenticatedPing(Peer peer, String? remoteIp) {
+    final dial = PeerAddress.dialFromInboundPing(
+      remoteIp: remoteIp,
+      lastSeenAddress: peer.lastSeenAddress,
+      defaultPort: defaultHostPort,
+    );
+    if (dial == null) {
+      AppLogger.logVerbose(
+        'inbound ping presence skip: no dial',
+        scope: 'presence',
+        details: {
+          'fp': peer.fingerprint.length > 12
+              ? '${peer.fingerprint.substring(0, 12)}…'
+              : peer.fingerprint,
+          'remote': remoteIp,
+        },
+      );
+      return;
+    }
+    peerRegistry().markReachable(
+      fingerprint: peer.fingerprint,
+      name: peer.name,
+      brand: peer.brand,
+      model: peer.model,
+      emoji: peer.emoji,
+      address: dial,
+      reason: 'inbound_ping',
+    );
+    if (peer.lastSeenAddress != dial) {
+      unawaited(_persistInboundPingDial(peer.fingerprint, dial));
+    }
+  }
+
+  Future<void> _persistInboundPingDial(String fingerprint, String dial) async {
+    try {
+      final repo = await peerRepository();
+      final existing = await repo.findByFingerprint(fingerprint);
+      if (existing == null || existing.lastSeenAddress == dial) return;
+      await repo.updateLastSeenAddress(fingerprint, dial);
+      await refreshPairedPeers();
+      peerApiClient().invalidate(fingerprint);
+      AppLogger.log(
+        'inbound ping sync dial address',
+        scope: 'presence',
+        details: {
+          'fp': fingerprint.length > 12
+              ? '${fingerprint.substring(0, 12)}…'
+              : fingerprint,
+          'from': existing.lastSeenAddress,
+          'to': dial,
+        },
+      );
+    } catch (e, st) {
+      AppLogger.log(
+        'inbound ping sync dial failed',
+        scope: 'presence',
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
@@ -1371,7 +1498,7 @@ class ServiceLocator {
           details: {
             'fp': short,
             'dial': addr,
-            'status': response!.statusCode,
+            'status': response.statusCode,
           },
         );
       } else {
@@ -1516,6 +1643,33 @@ class ServiceLocator {
     _announceSubscription = null;
     _discoveryBindingsReady = false;
     await _discoveryService?.stop();
+  }
+
+  /// 托盘「退出」：停宿主与发现，**不**改 NAS 开关持久化。
+  Future<void> shutdownRuntimeForExit() async {
+    try {
+      await stopDiscovery();
+    } catch (e, st) {
+      AppLogger.log(
+        'exit: stop discovery failed',
+        scope: 'boot',
+        error: e,
+        stackTrace: st,
+      );
+    }
+    try {
+      final host = _hostService;
+      if (host != null && host.isRunning) {
+        await host.stop();
+      }
+    } catch (e, st) {
+      AppLogger.log(
+        'exit: stop host failed',
+        scope: 'boot',
+        error: e,
+        stackTrace: st,
+      );
+    }
   }
 }
 

@@ -1,15 +1,12 @@
 import 'dart:async';
 
-import '../common/key_value_store.dart';
 import 'qr_crypto.dart';
 
 /// 密码配对服务（决策 #15：与扫码引导等效的对等信任）。
 ///
 /// 密码为**展示轮次**凭证：打开连接码时 [beginRound]，关窗/过期 [endRound]。
-/// 不再持久化为长期密码。失败限速：连错 [maxFailures] 次锁 [lockout]。
+/// 仅内存轮次，不持久化。失败限速：连错 [maxFailures] 次锁 [lockout]。
 class PairPasswordService {
-  static const _kLegacyPassword = 'pairing.password';
-
   /// 展示轮次默认有效期（与二维码 ticket 对齐）。
   static const roundValidity = Duration(minutes: 3);
 
@@ -17,10 +14,9 @@ class PairPasswordService {
   static const maxFailures = 5;
   static const lockout = Duration(seconds: 60);
 
-  PairPasswordService({required this.keyValueStore})
-      : _crypto = PairingCrypto();
+  PairPasswordService({PairingCrypto? crypto})
+      : _crypto = crypto ?? PairingCrypto();
 
-  final KeyValueStore keyValueStore;
   final PairingCrypto _crypto;
 
   int _failures = 0;
@@ -31,8 +27,6 @@ class PairPasswordService {
 
   /// 开启一轮展示密码；覆盖上一轮。返回新密码。
   String beginRound({Duration validity = roundValidity}) {
-    // 清除旧版长期密码，避免误用。
-    unawaited(keyValueStore.remove(_kLegacyPassword));
     _roundPassword = _crypto.generatePassword();
     _roundExpiresAt = DateTime.now().add(validity);
     _resetFailures();

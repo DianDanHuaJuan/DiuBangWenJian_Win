@@ -141,7 +141,9 @@ class PeerRegistry {
     }
   }
 
-  /// 本地注入在线（配对刚完成等）；续命仍只靠后续 announce。
+  /// 本地注入 / 续命在线（出站 probe、入站已认证 ping、配对刚完成等）。
+  ///
+  /// 长期自愈仍优先靠 UDP announce；本方法与 announce 一样可刷新 lastSeen。
   void markReachable({
     required String fingerprint,
     required String name,
@@ -150,9 +152,11 @@ class PeerRegistry {
     String brand = '',
     String emoji = '',
     bool? nasService,
+    String reason = 'local',
   }) {
     final existing = _online[fingerprint];
-    _online[fingerprint] = OnlinePeer(
+    _pingFailUntilMillis.remove(fingerprint);
+    final next = OnlinePeer(
       fingerprint: fingerprint,
       name: name,
       brand: brand.isNotEmpty ? brand : (existing?.brand ?? ''),
@@ -162,7 +166,36 @@ class PeerRegistry {
       lastSeenMillis: _now(),
       nasService: nasService ?? existing?.nasService ?? false,
     );
-
+    _online[fingerprint] = next;
+    final meaningful = existing == null ||
+        existing.address != next.address ||
+        existing.name != next.name ||
+        existing.brand != next.brand ||
+        existing.model != next.model ||
+        existing.emoji != next.emoji ||
+        existing.nasService != next.nasService;
+    if (!meaningful) return;
+    if (existing == null) {
+      AppLogger.log(
+        'presence online ($reason)',
+        scope: 'presence',
+        details: {
+          'fp': _shortFp(fingerprint),
+          'address': address,
+          'onlineCount': _online.length,
+        },
+      );
+    } else {
+      AppLogger.logVerbose(
+        'presence updated ($reason)',
+        scope: 'presence',
+        details: {
+          'fp': _shortFp(fingerprint),
+          'address': address,
+          'onlineCount': _online.length,
+        },
+      );
+    }
     _emit();
   }
 
@@ -191,30 +224,6 @@ class PeerRegistry {
       _emit();
     }
   }
-
-  /// NAS FGS → UI：用权威快照整表替换在线视图（含已配对与 nearby）。
-  void replacePresenceFromSnapshot(List<OnlinePeer> peers) {
-    _online
-      ..clear()
-      ..addEntries(peers.map((p) => MapEntry(p.fingerprint, p)));
-    _emit();
-  }
-
-  /// 序列化当前在线表（FGS 推 presence_snapshot 用）。
-  List<Map<String, Object?>> serializeOnlinePeers(Iterable<OnlinePeer> peers) =>
-      [
-        for (final p in peers)
-          {
-            'fingerprint': p.fingerprint,
-            'name': p.name,
-            'brand': p.brand,
-            'model': p.model,
-            'emoji': p.emoji,
-            'address': p.address,
-            'lastSeenMillis': p.lastSeenMillis,
-            'nasService': p.nasService,
-          },
-      ];
 
   /// 扫过期：未配对 / 无地址 / 无门闸回调 → 直接摘除；
   /// 已配对且有地址 → 短 ping，通则续命，不通再灰（冷静期内跳过 ping）。

@@ -44,13 +44,6 @@ class ChatOfferPoster {
   static bool isPosterFileName(String name) =>
       isVideoFileName(name) || isImageFileName(name);
 
-  /// 兼容旧调用：Windows 无 MediaStore id。
-  static bool isLikelyMediaStoreId(String? raw) => false;
-
-  static void rememberMediaAssetId(String taskId, String? mediaAssetId) {}
-
-  static String? rememberedMediaAssetId(String taskId) => null;
-
   Future<Directory> _dir() async {
     final root = await getTemporaryDirectory();
     final dir = Directory(p.join(root.path, 'chat_poster'));
@@ -72,7 +65,6 @@ class ChatOfferPoster {
   /// 发送方：按 localPath 抽封面并缓存。
   Future<String?> ensureLocalPoster({
     required TransferTask task,
-    String? mediaAssetId,
   }) async {
     if (!isPosterFileName(task.fileName)) return null;
     final existing = await cachedPathIfReady(task.id);

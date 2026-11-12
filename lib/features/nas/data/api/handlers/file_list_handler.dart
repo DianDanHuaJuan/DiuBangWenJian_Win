@@ -8,6 +8,7 @@ import '../../../../../core/auth/peer_fingerprint_middleware.dart';
 import '../../../../../core/common/app_logger.dart';
 import '../../../../../core/identity/peer.dart';
 import '../../../../../core/protocol/nas_api_paths.dart';
+import '../../../../../core/storage/app_paths.dart';
 import '../../../../../core/storage/external_volume_browser.dart';
 import '../../../../../core/storage/file_chunk_stream.dart';
 import '../../../../../core/storage/media_library_service.dart';
@@ -54,12 +55,17 @@ class StorageVolumesHandler {
               'items': [
                 for (final v in vols)
                   {
-                    'path': v.path,
+                    // 给客户端现成 rootId，避免手机端自行拼接盘符踩坑。
+                    'rootId': ExternalVolumeBrowser().rootIdFor(v.path),
+                    'path': AppPaths.portable(v.path),
                     'description': v.description,
                     'isPrimary': v.isPrimary,
                     'isRemovable': v.isRemovable,
                     'writable': v.writable,
                     'state': v.state,
+                    // 提示：这是磁盘卷，不是普通文件夹（旧客户端可忽略）。
+                    'kind': 'volume',
+                    'entryKind': 'disk',
                   },
               ],
             }),
@@ -110,8 +116,8 @@ class FileListHandler {
         }
 
         var rootId = request.url.queryParameters['rootId'] ?? '';
-        final relPath = (request.url.queryParameters['path'] ?? '')
-            .replaceAll('\\', '/');
+        final relPath =
+            AppPaths.portable(request.url.queryParameters['path'] ?? '');
         AppLogger.log(
           'GET /files',
           scope: 'nas_files',
@@ -234,7 +240,8 @@ class FileListHandler {
     final vols = await externalBrowser.listExternalVolumes();
     var label = '外置存储';
     for (final v in vols) {
-      if (v.path == volPath && v.description.isNotEmpty) {
+      if (externalBrowser.isSameVolumePath(v.path, volPath) &&
+          v.description.isNotEmpty) {
         label = v.description;
         break;
       }
@@ -442,10 +449,11 @@ class FileContentHandler {
           return Response.unauthorized('peer required');
         }
         var rootId = request.url.queryParameters['rootId'] ?? '';
-        final rel = (request.url.queryParameters['path'] ??
-                request.url.queryParameters['name'] ??
-                '')
-            .replaceAll('\\', '/');
+        final rel = AppPaths.portable(
+          request.url.queryParameters['path'] ??
+              request.url.queryParameters['name'] ??
+              '',
+        );
         if (rootId.isEmpty || rel.isEmpty) {
           return Response.badRequest(body: 'rootId and path required');
         }

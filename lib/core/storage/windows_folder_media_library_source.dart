@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'app_paths.dart';
 import 'media_library_models.dart';
 import 'media_library_source.dart';
 import 'mime_types.dart';
@@ -56,10 +57,13 @@ class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
       try {
         final st = await entity.stat();
         if (st.size <= 0) continue;
+        // 对外 id 必须是 Portable 相对路径（永远 `/`）。
+        final rel = AppPaths.relativePortable(rootPath, entity.path);
+        if (rel.isEmpty || rel.startsWith('..')) continue;
         out.add(
           MediaLibraryAsset(
-            id: p.normalize(entity.path),
-            contentUri: 'file://${entity.path}',
+            id: rel,
+            contentUri: '',
             displayName: name,
             sizeBytes: st.size,
             modifiedAtMs: st.modified.millisecondsSinceEpoch,

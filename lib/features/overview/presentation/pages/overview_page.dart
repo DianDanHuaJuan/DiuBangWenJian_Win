@@ -128,17 +128,32 @@ class _OverviewPairMenuButtonState extends State<_OverviewPairMenuButton> {
 
   void _show() {
     final box = _anchorKey.currentContext?.findRenderObject() as RenderBox?;
-    final overlayState = Overlay.maybeOf(context);
-    if (box == null || !box.hasSize || overlayState == null) return;
+    // 必须用 rootOverlay：左侧导航下内容区可能有嵌套 Overlay，
+    // 若用局部 Overlay + 全局坐标，菜单会偏到窗口右侧外。
+    final overlayState = Overlay.maybeOf(context, rootOverlay: true);
+    final overlayBox =
+        overlayState?.context.findRenderObject() as RenderBox?;
+    if (box == null ||
+        !box.hasSize ||
+        overlayState == null ||
+        overlayBox == null ||
+        !overlayBox.hasSize) {
+      return;
+    }
 
-    final origin = box.localToGlobal(Offset.zero);
+    final origin = box.localToGlobal(Offset.zero, ancestor: overlayBox);
     final btnSize = box.size;
-    final screenW = MediaQuery.sizeOf(context).width;
+    final overlaySize = overlayBox.size;
     final btnCenterX = origin.dx + btnSize.width / 2;
-    // 菜单右缘对齐加号右缘（仿微信）。
+    // 菜单右缘对齐加号右缘（仿微信），并夹在 overlay 内。
     var menuLeft = origin.dx + btnSize.width - _menuWidth;
-    menuLeft = menuLeft.clamp(8.0, screenW - _menuWidth - 8);
-    final menuTop = origin.dy + btnSize.height + 4;
+    menuLeft = menuLeft.clamp(8.0, overlaySize.width - _menuWidth - 8);
+    var menuTop = origin.dy + btnSize.height + 4;
+    // 预估菜单高度（两项 + 箭头），必要时改向上展开。
+    const estimatedMenuH = _arrowH + 48.0 * 2 + 1;
+    if (menuTop + estimatedMenuH > overlaySize.height - 8) {
+      menuTop = (origin.dy - estimatedMenuH - 4).clamp(8.0, overlaySize.height);
+    }
     final arrowLeft = (btnCenterX - menuLeft - _arrowW / 2)
         .clamp(10.0, _menuWidth - _arrowW - 10);
 
@@ -186,20 +201,6 @@ class _OverviewPairMenuButtonState extends State<_OverviewPairMenuButton> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _menuItem(
-                            // 与项目根目录 扫码02.svg 同构：四角框 + 中间扫描线
-                            icon: Icons.qr_code_scanner,
-                            label: '扫码连接',
-                            onTap: () {
-                              _dismiss();
-                              unawaited(pairByScanningQr(context));
-                            },
-                          ),
-                          const Divider(
-                            height: 1,
-                            thickness: 1,
-                            color: _dividerColor,
-                          ),
                           _menuItem(
                             icon: Icons.lock_outline_rounded,
                             label: '密码连接',
@@ -272,8 +273,9 @@ class _OverviewPairMenuButtonState extends State<_OverviewPairMenuButton> {
 
   @override
   Widget build(BuildContext context) {
-    // 视觉 22×22，点击区约 36×36，略大于图标本身。
+    // 视觉 22×22，点击区约 36×36；锚点挂在整块点击区上，避免坐标漂移。
     return GestureDetector(
+      key: _anchorKey,
       onTap: _toggle,
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
@@ -281,7 +283,6 @@ class _OverviewPairMenuButtonState extends State<_OverviewPairMenuButton> {
         height: 36,
         child: Center(
           child: Container(
-            key: _anchorKey,
             width: 22,
             height: 22,
             alignment: Alignment.center,
@@ -406,7 +407,9 @@ class _LocalHeroCardState extends State<_LocalHeroCard> {
                   return _ActionChip(
                     icon: Icons.wifi_outlined,
                     label: address.isNotEmpty && address != '0.0.0.0'
-                        ? address
+                        ? (serviceLocator.hostInterfaceName.isEmpty
+                            ? address
+                            : '$address · ${serviceLocator.hostInterfaceName}')
                         : '局域网 IP',
                     onTap: () => _showLocalAddressPicker(context),
                     onLongPress: () {
@@ -877,9 +880,10 @@ class _LocalAddressSheetBodyState extends State<_LocalAddressSheetBody> {
 
   @override
   Widget build(BuildContext context) {
-    final selected = serviceLocator.hostAddress;
     final candidates = _candidates;
-    return AppSheetBody(
+    return ValueListenableBuilder<String>(
+      valueListenable: serviceLocator.hostAddressListenable,
+      builder: (context, selected, _) => AppSheetBody(
       title: '本机IP地址',
       subtitle: '多网卡设备可能会有多个本机IP，请选择合适的地址。',
       loading: _loading,
@@ -912,12 +916,16 @@ class _LocalAddressSheetBodyState extends State<_LocalAddressSheetBody> {
                     subtitle: Text(c.interfaceName),
                     selected: c.address == selected,
                     onTap: () async {
-                      await serviceLocator.selectLocalAddress(c.address);
+                      await serviceLocator.selectLocalAddress(
+                        c.address,
+                        interfaceName: c.interfaceName,
+                      );
                       if (context.mounted) Navigator.of(context).pop();
                     },
                   ),
               ],
             ),
+    ),
     );
   }
 }

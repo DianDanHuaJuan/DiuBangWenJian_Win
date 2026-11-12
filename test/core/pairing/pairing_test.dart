@@ -125,12 +125,7 @@ void main() {
 
   group('密码配对服务', () {
     test('展示轮次：begin/verify/end', () async {
-      SharedPreferences.setMockInitialValues({});
-      final service = PairPasswordService(
-        keyValueStore: KeyValueStore(
-          sharedPreferences: await SharedPreferences.getInstance(),
-        ),
-      );
+      final service = PairPasswordService();
 
       final pwd = service.beginRound();
       expect(pwd, hasLength(8));
@@ -147,12 +142,7 @@ void main() {
     });
 
     test('限速：连错 5 次锁 60s，正确密码也拒绝', () async {
-      SharedPreferences.setMockInitialValues({});
-      final service = PairPasswordService(
-        keyValueStore: KeyValueStore(
-          sharedPreferences: await SharedPreferences.getInstance(),
-        ),
-      );
+      final service = PairPasswordService();
       final pwd = service.beginRound();
 
       for (var i = 0; i < 5; i++) {
@@ -200,6 +190,7 @@ void main() {
         identity: () async => (
               fingerprint: '11' * 32,
               name: '服务机',
+              brand: '',
               model: 'SM-S9080',
               stableIdHash: 'sid-host',
             ),
@@ -255,6 +246,7 @@ void main() {
         identity: () async => (
               fingerprint: '11' * 32,
               name: '服务机',
+              brand: '',
               model: 'M',
               stableIdHash: 'sid-host',
             ),
@@ -299,6 +291,7 @@ void main() {
         identity: () async => (
               fingerprint: '11' * 32,
               name: '服务机',
+              brand: '',
               model: 'M',
               stableIdHash: 'sid-host',
             ),
@@ -337,6 +330,7 @@ void main() {
         identity: () async => (
               fingerprint: '11' * 32,
               name: '被扫机',
+              brand: '',
               model: 'M2',
               stableIdHash: 'sid-host',
             ),
@@ -394,6 +388,7 @@ void main() {
         identity: () async => (
               fingerprint: '11' * 32,
               name: '被扫机',
+              brand: '',
               model: 'M2',
               stableIdHash: 'sid-host',
             ),

@@ -70,10 +70,19 @@ class _BackupPageState extends State<BackupPage> {
     );
     if (selected == null || !mounted) return;
 
+    final sourceDir =
+        await serviceLocator.deviceFileService().pickDirectory();
+    if (!mounted) return;
+    if (sourceDir == null || sourceDir.trim().isEmpty) {
+      _toast('已取消选择备份文件夹');
+      return;
+    }
+
     setState(() => _busy = true);
     final err = await _engine.startNewBackup(
       peerFingerprint: selected.fingerprint,
       peerName: selected.name,
+      sourceDirectory: sourceDir,
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -233,13 +242,13 @@ class _GalleryBackupDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              '即将备份图库中的全部图片和视频',
+              '即将备份所选文件夹中的图片和视频',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             const Text(
-              '选择一台当前在线、且已开启文件共享的设备',
+              '先选择接收设备，再选择本机要备份的文件夹',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: Color(0xFF6D6C6A), height: 1.4),
             ),
@@ -363,7 +372,7 @@ class _GalleryEntryCard extends StatelessWidget {
               const SizedBox(width: 14),
               Expanded(
                 child: Text(
-                  '备份图库',
+                  '备份文件夹',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
@@ -549,7 +558,7 @@ class _ScanOverlay extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        '正在读取整机图库',
+                        '正在扫描所选文件夹',
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
@@ -558,7 +567,7 @@ class _ScanOverlay extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 const Text(
-                  '正在找出可备份的图片和视频。',
+                  '正在找出文件夹中可备份的图片和视频。',
                   style: TextStyle(color: Color(0xFF6D6C6A), height: 1.4),
                 ),
                 const SizedBox(height: 16),

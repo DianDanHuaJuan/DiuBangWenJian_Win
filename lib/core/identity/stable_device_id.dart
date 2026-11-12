@@ -49,7 +49,7 @@ class StableDeviceIdService {
   Future<String?> _resolveWindowsId() async {
     try {
       if (_windowsIdResolver != null) {
-        final custom = await _windowsIdResolver!();
+        final custom = await _windowsIdResolver();
         final n = custom?.trim().toLowerCase();
         if (n != null && n.isNotEmpty) return n;
       }

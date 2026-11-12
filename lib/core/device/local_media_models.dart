@@ -1,3 +1,9 @@
+/// 扫描循环是否继续（[shouldCancel] 为 true 时停止）。
+bool mediaScanShouldContinue({bool Function()? shouldCancel}) {
+  if (shouldCancel == null) return true;
+  return !shouldCancel();
+}
+
 /// 本地选取结果模型（与平台选择器解耦）。
 class LocalMediaScanProgress {
   const LocalMediaScanProgress({

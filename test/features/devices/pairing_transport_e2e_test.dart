@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shelf/shelf.dart';
 
 import 'package:diubangwenjian/core/auth/peer_fingerprint_middleware.dart';
 import 'package:diubangwenjian/core/common/key_value_store.dart';

@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../common/app_exception.dart';
 import '../common/app_logger.dart';
 import '../common/key_value_store.dart';
+import 'app_paths.dart';
 import 'default_share_directory_probe.dart';
 import 'storage_access_diagnostics.dart';
 import 'storage_constants.dart';
@@ -231,7 +232,7 @@ class StorageRootStore {
 
 /// 是否为应用私有落盘路径（禁止作为共享写根）。
 bool isAppPrivateStoragePath(String path) {
-  final n = path.replaceAll('\\', '/').toLowerCase();
+  final n = AppPaths.portable(path).toLowerCase();
   if (n.contains('/app_flutter')) return true;
   if (n.contains('/data/user/')) return true;
   if (n.contains('/data/data/')) return true;

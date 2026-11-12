@@ -1,8 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 
+import 'app_paths.dart';
 import 'media_library_models.dart';
 import 'media_library_source.dart';
 
@@ -36,10 +35,25 @@ class MediaLibraryService {
     _cache = list;
     _cacheAt = DateTime.now();
     final map = <String, MediaLibraryAsset>{};
+    void put(String? key, MediaLibraryAsset asset) {
+      final k = key?.trim() ?? '';
+      if (k.isEmpty) return;
+      map.putIfAbsent(k, () => asset);
+    }
+
     for (final a in list) {
-      map[a.relativePath] = a;
-      if (a.displayName.isNotEmpty) map.putIfAbsent(a.displayName, () => a);
-      if (a.id.isNotEmpty) map.putIfAbsent(a.id, () => a);
+      for (final key in AppPaths.lookupKeys(a.relativePath)) {
+        put(key, a);
+      }
+      put(a.id, a);
+      put(AppPaths.portable(a.id), a);
+      put(a.displayName, a);
+      final abs = a.absolutePath?.trim();
+      if (abs != null && abs.isNotEmpty) {
+        for (final key in AppPaths.lookupKeys(abs)) {
+          put(key, a);
+        }
+      }
     }
     _byRelativePath = map;
   }
@@ -96,7 +110,24 @@ class MediaLibraryService {
 
   Future<MediaLibraryAsset?> findByRelativePath(String relativePath) async {
     await listAll();
-    return _byRelativePath?[relativePath];
+    final map = _byRelativePath;
+    if (map == null) return null;
+    final raw = relativePath.trim();
+    if (raw.isEmpty) return null;
+    for (final key in AppPaths.lookupKeys(raw)) {
+      final hit = map[key];
+      if (hit != null) return hit;
+    }
+    // 兼容旧客户端把绝对路径当 relativePath 传来。
+    final needle = AppPaths.portable(raw).toLowerCase();
+    for (final entry in map.entries) {
+      if (AppPaths.portable(entry.key).toLowerCase() == needle) {
+        return entry.value;
+      }
+      final abs = entry.value.absolutePath;
+      if (abs != null && AppPaths.equals(abs, raw)) return entry.value;
+    }
+    return null;
   }
 
   Future<Uint8List?> readBytes(
@@ -136,7 +167,12 @@ class MediaLibraryService {
     final bytes = await readBytes(asset);
     if (bytes == null || bytes.isEmpty) return null;
     final dest = File(
-      '${tempDir.path}${Platform.pathSeparator}lib_${asset.id}_${asset.displayName}',
+      AppPaths.native(
+        AppPaths.joinPortable(
+          AppPaths.portable(tempDir.path),
+          'lib_${asset.id}_${asset.displayName}',
+        ),
+      ),
     );
     await dest.writeAsBytes(bytes, flush: true);
     return dest;

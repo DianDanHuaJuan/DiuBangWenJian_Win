@@ -25,6 +25,7 @@ class HttpHostService {
     required this.securityContext,
     required this.publicRoutes,
     this.middlewares = const [],
+    this.bindAddress,
   });
 
   final int port;
@@ -33,6 +34,10 @@ class HttpHostService {
 
   /// 认证等中间件（log 恒在最前，doc/01 §五：宿主负责中间件管道）。
   final List<Middleware> middlewares;
+
+  /// Windows：绑到选定局域网地址，避免 TUN/虚拟网卡抢走回包。
+  /// 空则 `0.0.0.0`。
+  final InternetAddress? Function()? bindAddress;
 
   HttpServer? _server;
   bool _starting = false;
@@ -73,12 +78,30 @@ class HttpHostService {
       }
       final handler = pipeline.addHandler(publicRoutes.handler);
 
-      final server = await HttpServer.bindSecure(
-        InternetAddress.anyIPv4,
-        port,
-        await securityContext,
-        shared: true,
-      );
+      final preferred = _resolveBindAddress();
+      HttpServer server;
+      try {
+        server = await HttpServer.bindSecure(
+          preferred,
+          port,
+          await securityContext,
+          shared: true,
+        );
+      } catch (error) {
+        if (preferred.address == InternetAddress.anyIPv4.address) rethrow;
+        AppLogger.log(
+          'HTTPS bind preferred address failed, fallback any',
+          scope: 'host',
+          error: error,
+          details: {'address': preferred.address, 'port': port},
+        );
+        server = await HttpServer.bindSecure(
+          InternetAddress.anyIPv4,
+          port,
+          await securityContext,
+          shared: true,
+        );
+      }
       server.listen(
         (httpRequest) => _handleRequest(httpRequest, handler),
         onError: (Object error, StackTrace stackTrace) {
@@ -102,11 +125,25 @@ class HttpHostService {
       AppLogger.log(
         'HTTPS host listening',
         scope: 'host',
-        details: {'port': server.port, 'shared': true},
+        details: {
+          'port': server.port,
+          'address': server.address.address,
+          'shared': true,
+        },
       );
     } finally {
       _starting = false;
     }
+  }
+
+  InternetAddress _resolveBindAddress() {
+    final chosen = bindAddress?.call();
+    if (chosen == null ||
+        chosen.type != InternetAddressType.IPv4 ||
+        chosen.address == '0.0.0.0') {
+      return InternetAddress.anyIPv4;
+    }
+    return chosen;
   }
 
   Future<void> _rebind() async {

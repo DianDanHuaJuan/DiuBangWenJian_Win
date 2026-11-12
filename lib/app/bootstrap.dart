@@ -38,12 +38,9 @@ Future<void> bootstrap({List<String> startupArgs = const []}) async {
         }
       },
       onExitCleanup: () async {
+        // 进程退出只停监听；NAS 开关保持上次用户选择，下次启动恢复。
         try {
-          final sw = serviceLocator.nasServiceSwitch();
-          await StopNasServiceUseCase(serviceSwitch: sw).call();
-        } catch (_) {}
-        try {
-          await NasKeepAlive.sync(false);
+          await serviceLocator.shutdownRuntimeForExit();
         } catch (_) {}
       },
     );

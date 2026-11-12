@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../common/app_exception.dart';
+import 'app_paths.dart';
 import 'storage_constants.dart';
 import 'storage_root.dart';
 import 'storage_root_store.dart';
@@ -138,29 +139,30 @@ class ShareWriter {
   }
 
   Future<Directory> _resolveWriteDir(String rootPath, String relativeDir) async {
-    final trimmed = relativeDir.trim().replaceAll('\\', '/');
+    final rootPortable = AppPaths.portable(rootPath);
+    final trimmed = AppPaths.portable(relativeDir);
     if (trimmed.isEmpty) {
-      final dir = Directory(rootPath);
+      final dir = Directory(AppPaths.native(rootPortable));
       await dir.create(recursive: true);
       return dir;
     }
     if (trimmed.contains('..') ||
         trimmed.startsWith('/') ||
-        p.isAbsolute(trimmed)) {
+        AppPaths.isWindowsDriveRoot(trimmed) ||
+        trimmed.startsWith('//')) {
       throw const AppException(
         code: 'storage_bad_path',
         message: '非法写入子目录',
       );
     }
-    final joined = p.normalize(p.join(rootPath, trimmed));
-    final canonicalRoot = p.normalize(rootPath);
-    if (!p.isWithin(canonicalRoot, joined) && joined != canonicalRoot) {
+    final joinedPortable = AppPaths.joinPortable(rootPortable, trimmed);
+    if (!AppPaths.isWithinPortable(rootPortable, joinedPortable)) {
       throw const AppException(
         code: 'storage_bad_path',
         message: '写入路径越界',
       );
     }
-    final dir = Directory(joined);
+    final dir = Directory(AppPaths.native(joinedPortable));
     await dir.create(recursive: true);
     return dir;
   }

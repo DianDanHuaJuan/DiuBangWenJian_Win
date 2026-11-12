@@ -7,6 +7,7 @@ class StorageVolumeInfo {
     required this.isRemovable,
     required this.writable,
     this.state = '',
+    this.rootId = '',
   });
 
   final String path;
@@ -15,6 +16,9 @@ class StorageVolumeInfo {
   final bool isRemovable;
   final bool writable;
   final String state;
+
+  /// 服务端下发的浏览 rootId（如 `extvol:C:/`）；空则客户端自行拼接。
+  final String rootId;
 
   bool get isExternal => isRemovable && !isPrimary;
 
@@ -26,6 +30,7 @@ class StorageVolumeInfo {
       isRemovable: map['isRemovable'] == true,
       writable: map['writable'] != false,
       state: (map['state'] as String?) ?? '',
+      rootId: (map['rootId'] as String?) ?? '',
     );
   }
 }

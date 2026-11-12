@@ -214,6 +214,32 @@ void main() {
       expect(registry.onlinePaired, hasLength(1));
     });
 
+    test('markReachable inbound_ping 拉绿并刷新 lastSeen', () {
+      registry.markReachable(
+        fingerprint: 'a' * 64,
+        name: 'phone',
+        model: 'Pixel',
+        address: '192.168.1.40:5244',
+        reason: 'inbound_ping',
+      );
+      expect(registry.onlinePaired, hasLength(1));
+      expect(registry.onlinePaired.first.address, '192.168.1.40:5244');
+
+      now += offlineTimeout.inMilliseconds ~/ 2;
+      registry.markReachable(
+        fingerprint: 'a' * 64,
+        name: 'phone',
+        model: 'Pixel',
+        address: '192.168.1.40:5244',
+        reason: 'inbound_ping',
+      );
+      expect(registry.isOnline('a' * 64), isTrue);
+      expect(
+        registry.onlinePaired.first.lastSeenMillis,
+        now,
+      );
+    });
+
     test('配对后从 nearby 转入 onlinePaired（仍靠同一条 announce）', () async {
       final paired = <Peer>[peer('a' * 64)];
       late PeerRegistry dynamicRegistry;

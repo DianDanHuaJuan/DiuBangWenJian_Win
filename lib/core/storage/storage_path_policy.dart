@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../platform/app_platform.dart';
+import 'app_paths.dart';
 import 'storage_volumes.dart';
 
 /// 路径是否为某存储介质的根目录（内置盘 / SD / OTG 卷根）。
@@ -10,7 +11,7 @@ Future<bool> isStorageVolumeRoot(
   String absolutePath, {
   StorageVolumes? volumes,
 }) async {
-  final norm = _normalizeAbs(absolutePath);
+  final norm = AppPaths.portable(absolutePath).toLowerCase();
   if (norm.isEmpty || norm == '/') return true;
 
   const knownRoots = <String>{
@@ -23,14 +24,13 @@ Future<bool> isStorageVolumeRoot(
 
   // Windows 盘符根：C: / C:/
   if (!kIsWeb && AppPlatform.isWindows) {
-    if (RegExp(r'^[a-z]:/?$').hasMatch(norm)) return true;
+    if (AppPaths.isWindowsDriveRoot(absolutePath)) return true;
   }
 
   if (!kIsWeb && AppPlatform.isWindows) {
     final list = await (volumes ?? StorageVolumes()).list();
     for (final v in list) {
-      final vp = _normalizeAbs(v.path);
-      if (vp.isNotEmpty && vp == norm) return true;
+      if (AppPaths.equals(v.path, absolutePath)) return true;
     }
   }
 
@@ -50,7 +50,7 @@ Future<bool> isRemovableStoragePath(
   String absolutePath, {
   StorageVolumes? volumes,
 }) async {
-  final norm = _norm(absolutePath);
+  final norm = AppPaths.portable(absolutePath);
   if (norm.isEmpty) return false;
 
   // 内置模拟盘明确排除。
@@ -60,15 +60,24 @@ Future<bool> isRemovableStoragePath(
     return false;
   }
 
+  final list = await (volumes ?? StorageVolumes()).list();
+  for (final v in list) {
+    if (!v.isRemovable || v.isPrimary) continue;
+    final vp = AppPaths.portable(v.path);
+    if (vp.isEmpty) continue;
+    if (AppPaths.equals(vp, norm) || AppPaths.isWithinPortable(vp, norm)) {
+      return true;
+    }
+  }
+
+  // Android：/storage/<uuid>/...
+  final match = RegExp(r'^/storage/([^/]+)(/|$)').firstMatch(norm);
+  if (match != null) {
+    final seg = match.group(1)!;
+    if (seg != 'emulated' && seg != 'self') return true;
+  }
   return false;
 }
-
-String _normalizeAbs(String path) => path
-    .trim()
-    .replaceAll('\\', '/')
-    .replaceAll(RegExp(r'/+'), '/')
-    .replaceAll(RegExp(r'/+$'), '')
-    .toLowerCase();
 
 /// 写入后是否允许通知系统媒体库收录。
 Future<bool> shouldScanIntoMediaStore(
@@ -80,6 +89,3 @@ Future<bool> shouldScanIntoMediaStore(
   }
   return true;
 }
-
-String _norm(String path) =>
-    path.trim().replaceAll('\\', '/').replaceAll(RegExp(r'/+'), '/');

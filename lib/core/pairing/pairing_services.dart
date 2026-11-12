@@ -178,7 +178,7 @@ class PairingHostService {
     PairingCrypto? crypto,
   })  : _ticketRegistry = ticketRegistry ?? PairingTicketRegistry(),
         _passwordService =
-            passwordService ?? PairPasswordService(keyValueStore: keyValueStore),
+            passwordService ?? PairPasswordService(),
         _crypto = crypto ?? PairingCrypto();
 
   final PeerWriter peerRepository;

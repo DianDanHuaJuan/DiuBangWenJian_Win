@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../../../core/common/key_value_store.dart';
+import '../../../core/storage/app_paths.dart';
 
 /// 本机作为 NAS 时，对端能读到的范围。
 ///
@@ -123,7 +124,7 @@ class NasShareScope {
 
   /// 列出槽位目录的直接子项。空路径返回每个仍存在的已选文件夹。
   Future<List<NasScopeNode>> list(String relativePath) async {
-    final rel = relativePath.replaceAll('\\', '/').trim();
+    final rel = AppPaths.portable(relativePath);
     if (rel.isEmpty) {
       final dirs = folders;
       final out = <NasScopeNode>[];
@@ -162,7 +163,7 @@ class NasShareScope {
       out.add(
         NasScopeNode(
           name: name,
-          relativePath: childRel.replaceAll('\\', '/'),
+          relativePath: AppPaths.portable(childRel),
           isDirectory: isDir,
           sizeBytes: isDir ? 0 : stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
@@ -201,7 +202,7 @@ class NasShareScope {
   }
 
   ({int index, String rest})? _parseSlot(String relativePath) {
-    final rel = relativePath.replaceAll('\\', '/').trim();
+    final rel = AppPaths.portable(relativePath);
     final match = RegExp(r'^s(\d+)(?:/(.*))?$').firstMatch(rel);
     if (match == null) return null;
     final rest = match.group(2) ?? '';

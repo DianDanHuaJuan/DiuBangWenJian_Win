@@ -179,6 +179,7 @@ class _DevicesPageState extends State<DevicesPage> {
                         builder: (context, snapshot) {
                           final name = snapshot.data?.deviceName ?? '本机';
                           final ip = _displayIp(hostIp);
+                          final nic = serviceLocator.hostInterfaceName;
                           return _DeviceCard(
                             emoji: snapshot.data?.emoji ?? '',
                             title: name,
@@ -189,7 +190,7 @@ class _DevicesPageState extends State<DevicesPage> {
                               ),
                             ],
                             subtitle: _ipLine(
-                              ip: ip,
+                              ip: nic.isEmpty || ip.isEmpty ? ip : '$ip · $nic',
                               nasOn: nasState.enabled,
                             ),
                             onTap: () =>

@@ -11,11 +11,19 @@ import '../../../../app/router/route_paths.dart';
 import '../../../../app/ui/app_dialog.dart';
 import '../../../../core/file_provider/file_entry.dart';
 import '../../../../core/platform/browse_surface_labels.dart';
+import '../../../../core/storage/external_volume_browser.dart';
 import '../../../home/presentation/grid_selection_chrome.dart';
 import '../cubits/device_files_cubit.dart';
 import '../drag_select.dart';
 import '../../domain/category_download_run.dart';
 import '../widgets/upload_floating_actions.dart';
+
+/// 外置多卷列表中的「磁盘」条目（相对路径为空 + extvol rootId）。
+bool _isVolumeEntry(FileEntry entry) {
+  return entry.isDirectory &&
+      entry.relativePath.isEmpty &&
+      entry.rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix);
+}
 
 /// 设备文件浏览页（本机 / 对端共享区）。
 ///
@@ -903,6 +911,7 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
   }
 
   IconData _icon(FileEntry e) {
+    if (_isVolumeEntry(e)) return Icons.storage_rounded;
     if (e.isDirectory) return Icons.folder;
     if (e.isImage) return Icons.image_outlined;
     if (e.isVideo) return Icons.videocam_outlined;
@@ -925,6 +934,7 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
       itemBuilder: (context, index) {
         final entry = entries[index];
         final selected = cubit.isSelected(entry);
+        final isVolume = _isVolumeEntry(entry);
         return _PeerFileTouch(
           entry: entry,
           child: Column(
@@ -943,9 +953,11 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: entry.isDirectory
-                        ? const Text('文件夹')
-                        : Text(entry.sizeLabel),
+                    subtitle: isVolume
+                        ? const Text('磁盘')
+                        : entry.isDirectory
+                            ? const Text('文件夹')
+                            : Text(entry.sizeLabel),
                     trailing: cubit.state.selectionMode && !entry.isDirectory
                         ? Icon(
                             selected
@@ -1306,6 +1318,7 @@ class _ThumbOrIcon extends StatelessWidget {
   }
 
   IconData _icon() {
+    if (_isVolumeEntry(entry)) return Icons.storage_rounded;
     if (entry.isDirectory) return Icons.folder;
     if (entry.isImage) return Icons.image;
     if (entry.isVideo) return Icons.videocam;

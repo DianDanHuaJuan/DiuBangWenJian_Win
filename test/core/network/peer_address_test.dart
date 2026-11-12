@@ -49,5 +49,37 @@ void main() {
         'https://10.0.0.2:5244/api/v1/ping',
       );
     });
+
+    test('dialFromInboundPing：无 lastSeen 用默认端口', () {
+      expect(
+        PeerAddress.dialFromInboundPing(remoteIp: '192.168.1.20'),
+        '192.168.1.20:5244',
+      );
+    });
+
+    test('dialFromInboundPing：同 host 沿用 lastSeen 端口', () {
+      expect(
+        PeerAddress.dialFromInboundPing(
+          remoteIp: '192.168.1.20',
+          lastSeenAddress: '192.168.1.20:6000',
+        ),
+        '192.168.1.20:6000',
+      );
+    });
+
+    test('dialFromInboundPing：host 变化用默认端口', () {
+      expect(
+        PeerAddress.dialFromInboundPing(
+          remoteIp: '192.168.1.30',
+          lastSeenAddress: '192.168.1.20:6000',
+        ),
+        '192.168.1.30:5244',
+      );
+    });
+
+    test('dialFromInboundPing：坏 remote 返回 null', () {
+      expect(PeerAddress.dialFromInboundPing(remoteIp: null), isNull);
+      expect(PeerAddress.dialFromInboundPing(remoteIp: '0.0.0.0'), isNull);
+    });
   });
 }

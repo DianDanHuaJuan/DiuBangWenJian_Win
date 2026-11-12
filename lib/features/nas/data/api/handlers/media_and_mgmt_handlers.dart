@@ -11,6 +11,7 @@ import '../../../../../core/common/app_exception.dart';
 import '../../../../../core/identity/peer.dart';
 import '../../../../../core/protocol/nas_api_paths.dart';
 import '../../../../../core/protocol/thumb_image_tier.dart';
+import '../../../../../core/storage/app_paths.dart';
 import '../../../../../core/storage/external_volume_browser.dart';
 import '../../../../../core/storage/incomplete_file.dart';
 import '../../../../../core/storage/media_library_service.dart';
@@ -180,10 +181,9 @@ class BatchDeleteHandler {
         for (final rawItem in items) {
           final m = Map<String, dynamic>.from(rawItem as Map);
           var rootId = m['rootId'] as String? ?? '';
-          final rel = ((m['relativePath'] as String?) ??
-                  (m['name'] as String?) ??
-                  '')
-              .replaceAll('\\', '/');
+          final rel = AppPaths.portable(
+            (m['relativePath'] as String?) ?? (m['name'] as String?) ?? '',
+          );
           if (rootId.isEmpty || rel.isEmpty) {
             errors.add('$rootId/$rel: bad args');
             continue;
@@ -382,11 +382,18 @@ Future<File?> resolveScopedFile({
   required SharePathResolver resolver,
   required String rootId,
   required String name,
+  ExternalVolumeBrowser? externalBrowser,
 }) async {
   if (scope?.isCustom == true) {
     final file = scope!.resolveFile(name);
     if (file == null || !scope.allows(file.path)) return null;
     return file;
+  }
+  if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
+    final browser = externalBrowser ?? ExternalVolumeBrowser();
+    final vol = browser.volumePathFromRootId(rootId);
+    if (vol == null) return null;
+    return browser.resolveFile(volumePath: vol, relativePath: name);
   }
   var id = rootId;
   if (id == 'fs') {
