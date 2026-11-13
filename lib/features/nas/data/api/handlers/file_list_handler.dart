@@ -19,7 +19,7 @@ import '../../../../../core/storage/storage_access_diagnostics.dart';
 import '../../nas_share_scope.dart';
 import '../../share_path_resolver.dart';
 
-/// GET /api/v1/storage/volumes —— 非主卷（OTG/SD）列表。
+/// GET /api/v1/storage/volumes —— 可浏览卷列表（含全部盘符）。
 class StorageVolumesHandler {
   static const path = NasApiPaths.storageVolumes;
 
@@ -50,12 +50,13 @@ class StorageVolumesHandler {
               headers: {'content-type': 'application/json; charset=utf-8'},
             );
           }
-          final vols = await _browser.listExternalVolumes();
+          // 含全部盘符：对端目录树「根目录」需进入磁盘列表/卷根。
+          final vols = await _browser.listBrowsableVolumes();
           final items = [
             for (final v in vols)
               {
                 // 给客户端现成 rootId，避免手机端自行拼接盘符踩坑。
-                'rootId': ExternalVolumeBrowser().rootIdFor(v.path),
+                'rootId': _browser.rootIdFor(v.path),
                 'path': AppPaths.portable(v.path),
                 'description': v.description,
                 'isPrimary': v.isPrimary,
@@ -174,9 +175,18 @@ class FileListHandler {
             return _scopeResponse(relPath);
           }
 
+          String? rootAbsolutePath;
           if (rootId == 'fs') {
             final current = await resolver.currentRoot();
             rootId = current.id;
+            rootAbsolutePath = AppPaths.portable(current.uriOrPath);
+          } else {
+            try {
+              final current = await resolver.currentRoot();
+              if (current.id == rootId) {
+                rootAbsolutePath = AppPaths.portable(current.uriOrPath);
+              }
+            } catch (_) {}
           }
 
           final entries = await shareReader.listDirectory(
@@ -190,12 +200,15 @@ class FileListHandler {
               'rootId': rootId,
               'path': relPath,
               'count': entries.length,
+              'rootAbsolutePath': rootAbsolutePath ?? '',
             },
           );
           return Response.ok(
             jsonEncode({
               'rootId': rootId,
               'path': relPath,
+              if (rootAbsolutePath != null && rootAbsolutePath.isNotEmpty)
+                'rootAbsolutePath': rootAbsolutePath,
               'count': entries.length,
               'items': [
                 for (final e in entries)
@@ -268,7 +281,7 @@ class FileListHandler {
       );
       return Response.forbidden('invalid path');
     }
-    final vols = await externalBrowser.listExternalVolumes();
+    final vols = await externalBrowser.listBrowsableVolumes();
     var label = '外置存储';
     var matchedVol = false;
     for (final v in vols) {

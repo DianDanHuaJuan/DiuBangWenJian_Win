@@ -12,15 +12,20 @@ import '../../../../core/file_provider/local_file_provider.dart';
 import '../../../../core/file_provider/remote_peer_file_provider.dart';
 import '../../../../core/file_provider/share_category_files.dart';
 import '../../../../core/protocol/nas_api_paths.dart';
+import '../../../../core/storage/app_paths.dart';
 import '../../../../core/storage/external_volume_browser.dart';
 import '../../../../core/storage/media_library_service.dart';
 import '../../../../core/storage/storage_root.dart';
 import '../../../../core/storage/storage_volumes.dart';
+import '../../../../core/storage/windows_sensitive_paths.dart';
 import '../../../preview/gallery_launcher.dart';
 import '../../application/file_browse_facade.dart';
 
-/// 本机文件页视角：系统媒体库（+共享区文档） / 外置文件夹。
-enum LocalBrowseSurface { local, external }
+/// 文件页访问方式：媒体墙 / 目录树（定案）。
+enum BrowseAccessMode { mediaWall, directoryTree }
+
+/// 目录树锚点：共享根 / 某卷内 / 磁盘列表。
+enum DirectoryTreeAnchor { shareRoot, volume, volumePicker }
 
 class DeviceFilesState {
   const DeviceFilesState({
@@ -32,7 +37,8 @@ class DeviceFilesState {
     this.path = '',
     this.category = FileCategoryFilter.photo,
     this.source = ShareSourceFilter.current,
-    this.surface = LocalBrowseSurface.local,
+    this.accessMode = BrowseAccessMode.mediaWall,
+    this.treeAnchor = DirectoryTreeAnchor.shareRoot,
     this.externalVolumes = const [],
     this.externalVolumePath,
     this.gridMode = true,
@@ -42,6 +48,8 @@ class DeviceFilesState {
     this.total = 0,
     this.error,
     this.busy = false,
+    this.blockedDirectoryMessage,
+    this.shareAbsolutePath,
   });
 
   final bool loading;
@@ -52,7 +60,8 @@ class DeviceFilesState {
   final String path;
   final FileCategoryFilter category;
   final ShareSourceFilter source;
-  final LocalBrowseSurface surface;
+  final BrowseAccessMode accessMode;
+  final DirectoryTreeAnchor treeAnchor;
   final List<StorageVolumeInfo> externalVolumes;
   final String? externalVolumePath;
   final bool gridMode;
@@ -62,8 +71,38 @@ class DeviceFilesState {
   final int total;
   final String? error;
   final bool busy;
+  final String? blockedDirectoryMessage;
+  /// 当前共享根绝对路径（从共享根顶上退到盘内父目录）。
+  final String? shareAbsolutePath;
 
-  bool get isExternalSurface => surface == LocalBrowseSurface.external;
+  bool get isDirectoryTree => accessMode == BrowseAccessMode.directoryTree;
+
+  bool get isMediaWall => accessMode == BrowseAccessMode.mediaWall;
+
+  bool get isVolumePicker =>
+      isDirectoryTree && treeAnchor == DirectoryTreeAnchor.volumePicker;
+
+  bool get isOnVolume =>
+      isDirectoryTree && treeAnchor == DirectoryTreeAnchor.volume;
+
+  bool get volumesLookWindowsLike =>
+      externalVolumes.any((v) => RegExp(r'^[A-Za-z]:').hasMatch(v.path));
+
+  /// 系统返回是否应消费「上一级」。仅磁盘列表为最终闸口。
+  bool get canGoUpInTree {
+    if (!isDirectoryTree) return path.isNotEmpty;
+    if (path.isNotEmpty) return true;
+    if (treeAnchor == DirectoryTreeAnchor.volumePicker) return false;
+    if (treeAnchor == DirectoryTreeAnchor.volume) return true;
+    return shareAbsolutePath != null && shareAbsolutePath!.isNotEmpty;
+  }
+
+  List<StorageVolumeInfo> get otgVolumes =>
+      externalVolumes.where((v) => !v.isPrimary).toList(growable: false);
+
+  /// 目录树始终展示「根目录|OTG」；Windows 盘符场景 OTG 不可用。
+  bool get otgAvailable =>
+      isDirectoryTree && !volumesLookWindowsLike && otgVolumes.isNotEmpty;
 
   List<FileEntry> get mediaEntries => entries
       .where((e) => !e.isDirectory && (e.isImage || e.isVideo))
@@ -72,10 +111,22 @@ class DeviceFilesState {
   List<String> get breadcrumbSegments =>
       path.isEmpty ? const [] : path.split('/').where((s) => s.isNotEmpty).toList();
 
-  /// 外置模式不过滤分类；本机仍按分类。
-  List<FileEntry> get visibleEntries => isExternalSurface
+  /// 目录树不过滤分类；媒体墙按分类。
+  List<FileEntry> get visibleEntries => isDirectoryTree
       ? entries
       : entries.where(category.matches).toList();
+
+  /// 目录树路径行文案（纯展示，不是切换段）。
+  String get directoryTreePathLabel {
+    if (treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      return '选择磁盘';
+    }
+    final root = rootDisplayName.isEmpty
+        ? (treeAnchor == DirectoryTreeAnchor.shareRoot ? '共享根' : '存储')
+        : rootDisplayName;
+    if (path.isEmpty) return root;
+    return '$root / ${breadcrumbSegments.join(' / ')}';
+  }
 
   DeviceFilesState copyWith({
     bool? loading,
@@ -86,7 +137,8 @@ class DeviceFilesState {
     String? path,
     FileCategoryFilter? category,
     ShareSourceFilter? source,
-    LocalBrowseSurface? surface,
+    BrowseAccessMode? accessMode,
+    DirectoryTreeAnchor? treeAnchor,
     List<StorageVolumeInfo>? externalVolumes,
     Object? externalVolumePath = _sentinel,
     bool? gridMode,
@@ -97,6 +149,8 @@ class DeviceFilesState {
     String? error,
     bool clearError = false,
     bool? busy,
+    Object? blockedDirectoryMessage = _sentinel,
+    Object? shareAbsolutePath = _sentinel,
   }) =>
       DeviceFilesState(
         loading: loading ?? this.loading,
@@ -107,7 +161,8 @@ class DeviceFilesState {
         path: path ?? this.path,
         category: category ?? this.category,
         source: source ?? this.source,
-        surface: surface ?? this.surface,
+        accessMode: accessMode ?? this.accessMode,
+        treeAnchor: treeAnchor ?? this.treeAnchor,
         externalVolumes: externalVolumes ?? this.externalVolumes,
         externalVolumePath: identical(externalVolumePath, _sentinel)
             ? this.externalVolumePath
@@ -119,6 +174,13 @@ class DeviceFilesState {
         total: total ?? this.total,
         error: clearError ? null : (error ?? this.error),
         busy: busy ?? this.busy,
+        blockedDirectoryMessage:
+            identical(blockedDirectoryMessage, _sentinel)
+                ? this.blockedDirectoryMessage
+                : blockedDirectoryMessage as String?,
+        shareAbsolutePath: identical(shareAbsolutePath, _sentinel)
+            ? this.shareAbsolutePath
+            : shareAbsolutePath as String?,
       );
 }
 
@@ -223,7 +285,8 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
           'rootId': entry.rootId,
           'path': entry.relativePath,
           'absolutePath': entry.absolutePath ?? '',
-          'surface': state.surface.name,
+          'accessMode': state.accessMode.name,
+          'treeAnchor': state.treeAnchor.name,
           'externalVolumePath': state.externalVolumePath ?? '',
         },
       );
@@ -297,17 +360,18 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       ),
     );
     try {
-      if (state.isExternalSurface) {
-        await _probeExternalVolumes();
-        await _refreshExternal();
+      if (state.isDirectoryTree) {
+        await _probeBrowsableVolumes(allowFallback: true);
+        await _refreshDirectoryTree();
       } else if (isSelf) {
-        await _probeExternalVolumes();
+        try {
+          await _probeBrowsableVolumes(allowFallback: false);
+        } catch (_) {}
         await _refreshLocal(reset: true);
       } else {
         await _refreshRemote(reset: true);
-        // 探测外置卷供拨码置灰（失败则视为无外置）。
         try {
-          await _probeExternalVolumes();
+          await _probeBrowsableVolumes(allowFallback: false);
         } catch (_) {
           if (!isClosed) {
             emit(state.copyWith(externalVolumes: const []));
@@ -319,21 +383,22 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     }
   }
 
-  Future<void> _probeExternalVolumes() async {
+  Future<void> _probeBrowsableVolumes({required bool allowFallback}) async {
     AppLogger.log(
-      'probeExternalVolumes start',
+      'probeBrowsableVolumes start',
       scope: 'extvol_diag',
       details: {
         'isSelf': isSelf,
         'peerId': peerId ?? '',
         'prevSelected': state.externalVolumePath ?? '',
+        'treeAnchor': state.treeAnchor.name,
       },
     );
     final vols = isSelf
-        ? await _externalBrowser.listExternalVolumes()
-        : await _listRemoteExternalVolumes();
+        ? await _externalBrowser.listBrowsableVolumes()
+        : await _listRemoteBrowsableVolumes();
     AppLogger.log(
-      'probeExternalVolumes done',
+      'probeBrowsableVolumes done',
       scope: 'extvol_diag',
       details: {
         'count': vols.length,
@@ -351,42 +416,43 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       },
     );
     emit(state.copyWith(externalVolumes: vols));
+    if (!allowFallback || !state.isDirectoryTree) return;
     final selected = state.externalVolumePath;
     if (selected != null &&
         selected.isNotEmpty &&
+        state.treeAnchor == DirectoryTreeAnchor.volume &&
         !vols.any((v) => _externalBrowser.isSameVolumePath(v.path, selected))) {
       AppLogger.log(
-        'probeExternalVolumes selected missing → fallback local',
+        'probeBrowsableVolumes selected missing → shareRoot',
         scope: 'extvol_diag',
         details: {
           'selected': selected,
           'available': [for (final v in vols) v.path],
         },
       );
-      // 拔盘：退回系统存储。
       emit(
         state.copyWith(
-          surface: LocalBrowseSurface.local,
+          treeAnchor: DirectoryTreeAnchor.shareRoot,
           externalVolumePath: null,
           path: '',
           rootId: '',
-          error: vols.isEmpty ? '外置存储已移除' : null,
+          error: '存储卷已移除，已回到共享根',
         ),
       );
     }
   }
 
-  Future<List<StorageVolumeInfo>> _listRemoteExternalVolumes() async {
+  Future<List<StorageVolumeInfo>> _listRemoteBrowsableVolumes() async {
     final id = peerId;
     if (id == null || id.isEmpty) {
       AppLogger.log(
-        'listRemoteExternalVolumes skip empty peerId',
+        'listRemoteBrowsableVolumes skip empty peerId',
         scope: 'extvol_diag',
       );
       return const [];
     }
     AppLogger.log(
-      'listRemoteExternalVolumes GET /storage/volumes',
+      'listRemoteBrowsableVolumes GET /storage/volumes',
       scope: 'extvol_diag',
       details: {'peerId': id},
     );
@@ -397,7 +463,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         );
     if (response == null || response.statusCode != 200) {
       AppLogger.log(
-        'listRemoteExternalVolumes HTTP fail',
+        'listRemoteBrowsableVolumes HTTP fail',
         scope: 'extvol_diag',
         details: {
           'status': response?.statusCode,
@@ -407,7 +473,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       throw Exception(
         response?.statusCode == 503
             ? '对端未开启 NAS'
-            : '无法获取对端外置存储（请确认对端已更新）',
+            : '无法获取对端存储卷（请确认对端已更新）',
       );
     }
     final data = response.data;
@@ -416,12 +482,13 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         : <String, dynamic>{};
     final items = map['items'] as List<dynamic>? ?? const [];
     final raw = items.whereType<Map>().toList(growable: false);
+    // 定案：客户端不再过滤 !isPrimary，展示服务端下发的全部可浏览卷。
     final filtered = raw
         .map((e) => StorageVolumeInfo.fromMap(e))
-        .where((v) => v.path.isNotEmpty && !v.isPrimary)
+        .where((v) => v.path.isNotEmpty)
         .toList(growable: false);
     AppLogger.log(
-      'listRemoteExternalVolumes parsed',
+      'listRemoteBrowsableVolumes parsed',
       scope: 'extvol_diag',
       details: {
         'httpCount': map['count'],
@@ -449,118 +516,121 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     return filtered;
   }
 
-  Future<void> setSurface(LocalBrowseSurface surface) async {
-    if (surface == LocalBrowseSurface.external) {
+  Future<void> setAccessMode(BrowseAccessMode mode) async {
+    if (mode == BrowseAccessMode.directoryTree) {
       AppLogger.log(
-        'setSurface → external',
+        'setAccessMode → directoryTree',
         scope: 'extvol_diag',
         details: {'isSelf': isSelf, 'peerId': peerId ?? ''},
       );
       if (isSelf) {
-        // 列外置卷通常需要全部文件访问。
         try {
           await serviceLocator.permissionService().requestAllStorageForNas();
         } catch (_) {}
       }
       try {
-        await _probeExternalVolumes();
+        await _probeBrowsableVolumes(allowFallback: false);
       } catch (e) {
         AppLogger.log(
-          'setSurface probe failed',
+          'setAccessMode probe failed',
           scope: 'extvol_diag',
           error: e,
         );
-        emit(state.copyWith(error: '$e'));
-        return;
+        // 目录树仍进入共享根，即使卷列表失败。
       }
-      if (state.externalVolumes.isEmpty) {
-        AppLogger.log(
-          'setSurface external empty volumes',
-          scope: 'extvol_diag',
-          details: {'isSelf': isSelf},
-        );
-        emit(
-          state.copyWith(
-            error: isSelf
-                ? '未检测到外置存储。请插入 OTG U 盘，并确认已授予「所有文件访问」后点刷新。'
-                : '对端未检测到外置存储。请确认对端已插入 OTG 并授予文件访问权限。',
-          ),
-        );
-        return;
-      }
-      final vols = state.externalVolumes;
-      if (vols.length == 1) {
-        final only = vols.first;
-        final rootId = only.rootId.isNotEmpty
-            ? only.rootId
-            : _externalBrowser.rootIdFor(only.path);
-        AppLogger.log(
-          'setSurface single volume → enter',
-          scope: 'extvol_diag',
-          details: {
-            'path': only.path,
-            'rootId': rootId,
-            'desc': only.description,
-          },
-        );
-        emit(
-          state.copyWith(
-            surface: LocalBrowseSurface.external,
-            externalVolumePath: only.path,
-            path: '',
-            rootId: rootId,
-            rootDisplayName:
-                only.description.isEmpty ? '外置存储' : only.description,
-            selectionMode: false,
-            selected: {},
-            hasMore: false,
-            clearError: true,
-          ),
-        );
-      } else {
-        // 多卷：先列卷，再点入。
-        AppLogger.log(
-          'setSurface multi volume → volume list',
-          scope: 'extvol_diag',
-          details: {
-            'count': vols.length,
-            'paths': [for (final v in vols) v.path],
-            'rootIds': [
-              for (final v in vols)
-                v.rootId.isNotEmpty
-                    ? v.rootId
-                    : _externalBrowser.rootIdFor(v.path),
-            ],
-          },
-        );
-        emit(
-          state.copyWith(
-            surface: LocalBrowseSurface.external,
-            externalVolumePath: null,
-            path: '',
-            rootId: '',
-            rootDisplayName: '外置存储',
-            selectionMode: false,
-            selected: {},
-            hasMore: false,
-            clearError: true,
-          ),
-        );
-      }
-    } else {
       emit(
         state.copyWith(
-          surface: LocalBrowseSurface.local,
+          accessMode: BrowseAccessMode.directoryTree,
+          treeAnchor: DirectoryTreeAnchor.shareRoot,
           externalVolumePath: null,
           path: '',
           rootId: '',
+          rootDisplayName: '',
           selectionMode: false,
           selected: {},
           hasMore: false,
           clearError: true,
+          blockedDirectoryMessage: null,
+        ),
+      );
+    } else {
+      emit(
+        state.copyWith(
+          accessMode: BrowseAccessMode.mediaWall,
+          treeAnchor: DirectoryTreeAnchor.shareRoot,
+          externalVolumePath: null,
+          path: '',
+          rootId: '',
+          category: FileCategoryFilter.photo,
+          selectionMode: false,
+          selected: {},
+          hasMore: false,
+          clearError: true,
+          blockedDirectoryMessage: null,
         ),
       );
     }
+    await refresh();
+  }
+
+  /// 「根目录」：Windows = 各磁盘列表；清空卷内路径。
+  Future<void> goToVolumeRoot() async {
+    if (!state.isDirectoryTree) return;
+    AppLogger.log(
+      'goToVolumeRoot → volumePicker',
+      scope: 'extvol_diag',
+      details: {'isSelf': isSelf, 'vols': state.externalVolumes.length},
+    );
+    try {
+      await _probeBrowsableVolumes(allowFallback: false);
+    } catch (e) {
+      emit(state.copyWith(error: '$e'));
+    }
+    emit(
+      state.copyWith(
+        accessMode: BrowseAccessMode.directoryTree,
+        treeAnchor: DirectoryTreeAnchor.volumePicker,
+        externalVolumePath: null,
+        path: '',
+        rootId: '',
+        rootDisplayName: '各磁盘',
+        selectionMode: false,
+        selected: {},
+        hasMore: false,
+        clearError: true,
+        blockedDirectoryMessage: null,
+      ),
+    );
+    await refresh();
+  }
+
+  /// 「OTG」：进入对端可移动卷（本机 Windows 通常 otgAvailable=false）。
+  Future<void> goToOtg() async {
+    if (!state.isDirectoryTree || !state.otgAvailable) return;
+    final otg = state.otgVolumes;
+    if (otg.isEmpty) {
+      emit(state.copyWith(error: '未检测到 OTG / 可移动存储'));
+      return;
+    }
+    if (otg.length == 1) {
+      await selectExternalVolume(otg.first);
+      return;
+    }
+    emit(
+      state.copyWith(
+        accessMode: BrowseAccessMode.directoryTree,
+        treeAnchor: DirectoryTreeAnchor.volumePicker,
+        externalVolumePath: null,
+        path: '',
+        rootId: '',
+        rootDisplayName: 'OTG',
+        selectionMode: false,
+        selected: {},
+        hasMore: false,
+        clearError: true,
+        blockedDirectoryMessage: null,
+      ),
+    );
     await refresh();
   }
 
@@ -582,168 +652,196 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     );
     emit(
       state.copyWith(
-        surface: LocalBrowseSurface.external,
+        accessMode: BrowseAccessMode.directoryTree,
+        treeAnchor: DirectoryTreeAnchor.volume,
         externalVolumePath: volPath,
         path: '',
         rootId: rootId,
         rootDisplayName:
-            volume.description.isEmpty ? '外置存储' : volume.description,
+            volume.description.isEmpty ? '存储' : volume.description,
         selectionMode: false,
         selected: {},
         hasMore: false,
         clearError: true,
+        blockedDirectoryMessage: null,
       ),
     );
     await refresh();
   }
 
-  Future<void> _refreshExternal() async {
-    final vols = state.externalVolumes;
-    if (vols.isEmpty) {
-      AppLogger.log('_refreshExternal empty volumes', scope: 'extvol_diag');
-      emit(
-        state.copyWith(
-          loading: false,
-          entries: const [],
-          surface: LocalBrowseSurface.local,
-          externalVolumePath: null,
-          error: '外置存储已移除',
-        ),
-      );
-      return;
-    }
+  void clearBlockedDirectoryMessage() {
+    if (state.blockedDirectoryMessage == null) return;
+    emit(state.copyWith(blockedDirectoryMessage: null));
+  }
 
+  Future<void> _refreshDirectoryTree() async {
+    switch (state.treeAnchor) {
+      case DirectoryTreeAnchor.shareRoot:
+        await _refreshDirectoryTreeShareRoot();
+      case DirectoryTreeAnchor.volumePicker:
+        await _refreshDirectoryTreeVolumePicker();
+      case DirectoryTreeAnchor.volume:
+        await _refreshDirectoryTreeVolume();
+    }
+  }
+
+  Future<void> _refreshDirectoryTreeShareRoot() async {
+    final List<FileEntry> entries;
+    String rootId;
+    String label;
+    String? shareAbs = state.shareAbsolutePath;
+    if (isSelf) {
+      final local = _provider as LocalFileProvider;
+      final current = await local.ensureCurrent();
+      rootId = current.id;
+      label = current.displayName.isEmpty ? '共享根' : current.displayName;
+      shareAbs = AppPaths.portable(current.uriOrPath);
+      entries = await local.list(rootId: rootId, path: state.path);
+    } else {
+      final remote = _provider as RemotePeerFileProvider;
+      rootId = 'fs';
+      label = '共享根';
+      final page = await remote.listPage(
+        rootId: rootId,
+        path: state.path,
+        limit: 0,
+      );
+      entries = page.items;
+      if (entries.isNotEmpty && entries.first.rootDisplayName.isNotEmpty) {
+        label = entries.first.rootDisplayName;
+      }
+      if (page.rootId.isNotEmpty) rootId = page.rootId;
+      if (page.rootAbsolutePath != null &&
+          page.rootAbsolutePath!.trim().isNotEmpty) {
+        shareAbs = AppPaths.portable(page.rootAbsolutePath!);
+      }
+    }
+    emit(
+      state.copyWith(
+        loading: false,
+        loadingMore: false,
+        entries: entries,
+        rootId: rootId,
+        rootDisplayName: label,
+        treeAnchor: DirectoryTreeAnchor.shareRoot,
+        externalVolumePath: null,
+        shareAbsolutePath: shareAbs,
+        hasMore: false,
+        total: entries.length,
+        clearError: true,
+      ),
+    );
+  }
+
+  Future<void> _refreshDirectoryTreeVolumePicker() async {
+    final vols = state.externalVolumes;
+    final volumeEntries = [
+      for (final v in vols)
+        FileEntry(
+          name: v.description.isEmpty ? v.path : v.description,
+          relativePath: '',
+          rootId: v.rootId.isNotEmpty
+              ? v.rootId
+              : _externalBrowser.rootIdFor(v.path),
+          rootDisplayName: '各磁盘',
+          isDirectory: true,
+          sizeBytes: 0,
+          modifiedAtMs: 0,
+          absolutePath: v.path,
+        ),
+    ];
+    AppLogger.log(
+      '_refreshDirectoryTree volumePicker',
+      scope: 'extvol_diag',
+      details: {
+        'count': volumeEntries.length,
+        'entries': [
+          for (final e in volumeEntries)
+            {
+              'name': e.name,
+              'rootId': e.rootId,
+              'absolutePath': e.absolutePath,
+            },
+        ],
+      },
+    );
+    emit(
+      state.copyWith(
+        loading: false,
+        loadingMore: false,
+        entries: volumeEntries,
+        rootId: '',
+        rootDisplayName: '各磁盘',
+        externalVolumePath: null,
+        hasMore: false,
+        total: volumeEntries.length,
+        clearError: true,
+      ),
+    );
+  }
+
+  Future<void> _refreshDirectoryTreeVolume() async {
+    final vols = state.externalVolumes;
     var volPath = state.externalVolumePath;
     if (volPath == null || volPath.isEmpty) {
-      volPath = vols.first.path;
+      await _refreshDirectoryTreeVolumePicker();
+      return;
     }
     AppLogger.log(
-      '_refreshExternal enter',
+      '_refreshDirectoryTree volume',
       scope: 'extvol_diag',
       details: {
         'volPath': volPath,
-        'stateExternalVolumePath': state.externalVolumePath ?? '',
         'statePath': state.path,
-        'stateRootId': state.rootId,
         'volsCount': vols.length,
         'isSelf': isSelf,
       },
     );
     if (isSelf && !await _externalBrowser.isVolumeMounted(volPath)) {
-      AppLogger.log(
-        '_refreshExternal not mounted',
-        scope: 'extvol_diag',
-        details: {'volPath': volPath},
-      );
       emit(
         state.copyWith(
           loading: false,
           entries: const [],
-          surface: LocalBrowseSurface.local,
+          treeAnchor: DirectoryTreeAnchor.shareRoot,
           externalVolumePath: null,
-          error: '外置存储已移除',
+          path: '',
+          error: '存储卷已移除，已回到共享根',
         ),
       );
+      await _refreshDirectoryTreeShareRoot();
       return;
     }
 
+    final resolvedVolPath = volPath;
     final label = vols
         .firstWhere(
-          (v) => _externalBrowser.isSameVolumePath(v.path, volPath!),
-          orElse: () => vols.first,
+          (v) => _externalBrowser.isSameVolumePath(v.path, resolvedVolPath),
+          orElse: () => StorageVolumeInfo(
+            path: resolvedVolPath,
+            description: '存储',
+            isPrimary: false,
+            isRemovable: false,
+            writable: true,
+          ),
         )
         .description;
 
-    // 多卷且尚未进入具体路径：根层列出各卷，便于选择。
-    if (vols.length > 1 &&
-        state.path.isEmpty &&
-        (state.externalVolumePath == null ||
-            state.externalVolumePath!.isEmpty)) {
-      final volumeEntries = [
-        for (final v in vols)
-          FileEntry(
-            name: v.description.isEmpty ? v.path : v.description,
-            relativePath: '',
-            rootId: v.rootId.isNotEmpty
-                ? v.rootId
-                : _externalBrowser.rootIdFor(v.path),
-            rootDisplayName: '外置存储',
-            isDirectory: true,
-            sizeBytes: 0,
-            modifiedAtMs: 0,
-            absolutePath: v.path,
-          ),
-      ];
-      AppLogger.log(
-        '_refreshExternal show volume picker',
-        scope: 'extvol_diag',
-        details: {
-          'entries': [
-            for (final e in volumeEntries)
-              {
-                'name': e.name,
-                'rootId': e.rootId,
-                'absolutePath': e.absolutePath,
-              },
-          ],
-        },
-      );
-      emit(
-        state.copyWith(
-          loading: false,
-          loadingMore: false,
-          entries: volumeEntries,
-          rootId: '',
-          rootDisplayName: '外置存储',
-          externalVolumePath: null,
-          hasMore: false,
-          total: volumeEntries.length,
-          clearError: true,
-        ),
-      );
-      return;
-    }
-
     final List<FileEntry> entries;
-    final requestRootId = _externalBrowser.rootIdFor(volPath);
+    final requestRootId = _externalBrowser.rootIdFor(resolvedVolPath);
     if (isSelf) {
-      AppLogger.log(
-        '_refreshExternal local listDirectory',
-        scope: 'extvol_diag',
-        details: {
-          'volPath': volPath,
-          'rel': state.path,
-          'rootId': requestRootId,
-        },
-      );
       entries = await _externalBrowser.listDirectory(
-        volumePath: volPath,
-        volumeLabel: label.isEmpty ? '外置存储' : label,
+        volumePath: resolvedVolPath,
+        volumeLabel: label.isEmpty ? '存储' : label,
         relativePath: state.path,
       );
     } else {
       final remote = _provider as RemotePeerFileProvider;
-      AppLogger.log(
-        '_refreshExternal remote GET /files',
-        scope: 'extvol_diag',
-        details: {
-          'rootId': requestRootId,
-          'path': state.path,
-          'volPath': volPath,
-          'peerId': peerId ?? '',
-        },
-      );
       final page = await remote.listPage(
         rootId: requestRootId,
         path: state.path,
         limit: 0,
       );
       entries = page.items;
-      AppLogger.log(
-        '_refreshExternal remote /files ok',
-        scope: 'extvol_diag',
-        details: {'rootId': page.rootId, 'count': entries.length},
-      );
     }
     emit(
       state.copyWith(
@@ -751,8 +849,9 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         loadingMore: false,
         entries: entries,
         rootId: requestRootId,
-        rootDisplayName: label.isEmpty ? '外置存储' : label,
-        externalVolumePath: volPath,
+        rootDisplayName: label.isEmpty ? '存储' : label,
+        externalVolumePath: resolvedVolPath,
+        treeAnchor: DirectoryTreeAnchor.volume,
         hasMore: false,
         total: entries.length,
         clearError: true,
@@ -989,70 +1088,57 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
 
   Future<void> openEntry(FileEntry entry) async {
     if (!entry.isDirectory) return;
-    if (state.isExternalSurface) {
-      final volPath = _externalBrowser.volumePathFromRootId(entry.rootId);
-      final matchRows = [
-        for (final v in state.externalVolumes)
-          {
-            'v.path': v.path,
-            'eq_strict': v.path == volPath,
-            'eq_same': volPath != null &&
-                _externalBrowser.isSameVolumePath(v.path, volPath),
-          },
-      ];
-      AppLogger.log(
-        'openEntry external',
-        scope: 'extvol_diag',
-        details: {
-          'entry.name': entry.name,
-          'entry.rootId': entry.rootId,
-          'entry.relativePath': entry.relativePath,
-          'entry.absolutePath': entry.absolutePath ?? '',
-          'decodedVolPath': volPath ?? '',
-          'state.externalVolumePath': state.externalVolumePath ?? '',
-          'willTryVolumePick': volPath != null &&
-              entry.relativePath.isEmpty &&
-              state.externalVolumePath == null,
-          'volumeMatch': matchRows,
-        },
-      );
-      // 多卷列表点入某一卷（路径比较兼容 C:\ / C:/）。
-      if (volPath != null &&
-          entry.relativePath.isEmpty &&
-          state.externalVolumePath == null) {
-        StorageVolumeInfo? vol;
-        for (final v in state.externalVolumes) {
-          if (_externalBrowser.isSameVolumePath(v.path, volPath)) {
-            vol = v;
-            break;
-          }
+
+    // 磁盘列表点入某一盘。
+    if (state.isDirectoryTree &&
+        state.treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      final volPath = _externalBrowser.volumePathFromRootId(entry.rootId) ??
+          entry.absolutePath;
+      if (volPath == null || volPath.isEmpty) return;
+      StorageVolumeInfo? vol;
+      for (final v in state.externalVolumes) {
+        if (_externalBrowser.isSameVolumePath(v.path, volPath)) {
+          vol = v;
+          break;
         }
-        vol ??= StorageVolumeInfo(
-          path: volPath,
-          description: entry.name,
-          isPrimary: false,
-          isRemovable: false,
-          writable: true,
-        );
-        AppLogger.log(
-          'openEntry volume pick → selectExternalVolume',
-          scope: 'extvol_diag',
-          details: {
-            'matchedFromList': matchRows.any((m) => m['eq_same'] == true),
-            'selectedPath': vol.path,
-          },
-        );
-        await selectExternalVolume(vol);
-        return;
       }
+      vol ??= StorageVolumeInfo(
+        path: volPath,
+        description: entry.name,
+        isPrimary: false,
+        isRemovable: false,
+        writable: true,
+      );
+      await selectExternalVolume(vol);
+      return;
     }
+
+    // Windows 敏感目录：本机或对端 Windows 盘列表可显示，禁止进入。
+    if (state.isDirectoryTree &&
+        (state.volumesLookWindowsLike ||
+            defaultTargetPlatform == TargetPlatform.windows) &&
+        isWindowsSensitiveDirectory(
+          name: entry.name,
+          absolutePath: entry.absolutePath,
+        )) {
+      final msg = '系统保护目录，无法进入：${entry.name}';
+      emit(
+        state.copyWith(
+          blockedDirectoryMessage: msg,
+          error: msg,
+        ),
+      );
+      return;
+    }
+
     AppLogger.log(
-      'openEntry fallback → refresh with entry path',
+      'openEntry → refresh with entry path',
       scope: 'extvol_diag',
       details: {
         'rootId': entry.rootId,
         'path': entry.relativePath,
-        'isExternal': state.isExternalSurface,
+        'accessMode': state.accessMode.name,
+        'treeAnchor': state.treeAnchor.name,
       },
     );
     emit(
@@ -1063,67 +1149,153 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         selectionMode: false,
         selected: {},
         hasMore: false,
+        blockedDirectoryMessage: null,
       ),
     );
     await refresh();
   }
 
-  Future<void> goUp() async {
-    if (state.path.isEmpty) {
-      // 外置多卷：在卷根再返回 → 卷列表。
-      if (state.isExternalSurface &&
-          state.externalVolumePath != null &&
-          state.externalVolumes.length > 1) {
-        emit(
-          state.copyWith(
-            externalVolumePath: null,
-            path: '',
-            rootId: '',
-            rootDisplayName: '外置存储',
-            selectionMode: false,
-            selected: {},
-            hasMore: false,
-          ),
-        );
-        await refresh();
-      }
-      return;
+  /// 上一级：退 path；共享根顶→盘内父目录；盘根→磁盘列表；仅磁盘列表为闸。
+  Future<bool> goUp() async {
+    if (state.path.isNotEmpty) {
+      final parts = state.breadcrumbSegments;
+      final parent = parts.length <= 1
+          ? ''
+          : parts.sublist(0, parts.length - 1).join('/');
+      emit(
+        state.copyWith(
+          path: parent,
+          selectionMode: false,
+          selected: {},
+          hasMore: false,
+        ),
+      );
+      await refresh();
+      return true;
     }
-    final parts = state.breadcrumbSegments;
-    final parent = parts.length <= 1
-        ? ''
-        : parts.sublist(0, parts.length - 1).join('/');
-    emit(state.copyWith(path: parent, selectionMode: false, selected: {}, hasMore: false));
+
+    if (!state.isDirectoryTree) return false;
+
+    if (state.treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      return false;
+    }
+
+    if (state.treeAnchor == DirectoryTreeAnchor.volume) {
+      await goToVolumeRoot();
+      return true;
+    }
+
+    if (state.treeAnchor == DirectoryTreeAnchor.shareRoot) {
+      return _goUpFromShareRootTop();
+    }
+    return false;
+  }
+
+  Future<bool> _goUpFromShareRootTop() async {
+    var abs = state.shareAbsolutePath?.trim();
+    if ((abs == null || abs.isEmpty) && isSelf) {
+      try {
+        final local = _provider as LocalFileProvider;
+        abs = AppPaths.portable((await local.ensureCurrent()).uriOrPath);
+      } catch (_) {}
+    }
+    if (abs == null || abs.isEmpty) return false;
+
+    if (state.externalVolumes.isEmpty) {
+      try {
+        await _probeBrowsableVolumes(allowFallback: false);
+      } catch (_) {}
+    }
+
+    final sharePortable = AppPaths.portable(abs);
+    StorageVolumeInfo? best;
+    var bestLen = -1;
+    for (final v in state.externalVolumes) {
+      final vp = AppPaths.portable(v.path);
+      if (vp.isEmpty) continue;
+      final shareLower = sharePortable.toLowerCase();
+      final volLower = vp.toLowerCase();
+      final under = shareLower == volLower ||
+          shareLower.startsWith(volLower.endsWith('/') ? volLower : '$volLower/');
+      if (!under) continue;
+      if (vp.length > bestLen) {
+        best = v;
+        bestLen = vp.length;
+      }
+    }
+    if (best == null) {
+      await goToVolumeRoot();
+      return true;
+    }
+
+    final volPath = AppPaths.portable(best.path);
+    final shareLower = sharePortable.toLowerCase();
+    final volLower = volPath.toLowerCase();
+    if (shareLower == volLower) {
+      await goToVolumeRoot();
+      return true;
+    }
+    var rel = sharePortable;
+    if (shareLower.startsWith(volLower.endsWith('/') ? volLower : '$volLower/')) {
+      rel = sharePortable.substring(
+        volPath.endsWith('/') ? volPath.length : volPath.length + 1,
+      );
+    }
+    final segs = AppPaths.portable(rel)
+        .split('/')
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final parentRel =
+        segs.length <= 1 ? '' : segs.sublist(0, segs.length - 1).join('/');
+
+    final rootId = best.rootId.isNotEmpty
+        ? best.rootId
+        : _externalBrowser.rootIdFor(volPath);
+    emit(
+      state.copyWith(
+        accessMode: BrowseAccessMode.directoryTree,
+        treeAnchor: DirectoryTreeAnchor.volume,
+        externalVolumePath: volPath,
+        path: parentRel,
+        rootId: rootId,
+        rootDisplayName:
+            best.description.isEmpty ? '存储' : best.description,
+        selectionMode: false,
+        selected: {},
+        hasMore: false,
+        clearError: true,
+        blockedDirectoryMessage: null,
+      ),
+    );
     await refresh();
+    return true;
   }
 
   Future<void> goBreadcrumb(int index) async {
     if (index < 0) {
-      if (state.isExternalSurface && state.externalVolumes.length > 1) {
-        emit(
-          state.copyWith(
-            externalVolumePath: null,
-            path: '',
-            rootId: '',
-            rootDisplayName: '外置存储',
-            selectionMode: false,
-            selected: {},
-            hasMore: false,
-          ),
-        );
-      } else {
-        emit(
-          state.copyWith(
-            path: '',
-            selectionMode: false,
-            selected: {},
-            hasMore: false,
-          ),
-        );
+      if (state.isDirectoryTree &&
+          state.treeAnchor == DirectoryTreeAnchor.volume) {
+        await goToVolumeRoot();
+        return;
       }
+      emit(
+        state.copyWith(
+          path: '',
+          selectionMode: false,
+          selected: {},
+          hasMore: false,
+        ),
+      );
     } else {
       final parts = state.breadcrumbSegments.take(index + 1).join('/');
-      emit(state.copyWith(path: parts, selectionMode: false, selected: {}, hasMore: false));
+      emit(
+        state.copyWith(
+          path: parts,
+          selectionMode: false,
+          selected: {},
+          hasMore: false,
+        ),
+      );
     }
     await refresh();
   }
@@ -1170,7 +1342,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       return serviceLocator.mediaLibraryService().deleteByRelativePath(rel);
     }
     if (isSelf &&
-        state.isExternalSurface &&
+        state.isOnVolume &&
         rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
       final vol = _externalBrowser.volumePathFromRootId(rootId) ??
           state.externalVolumePath;
@@ -1241,19 +1413,21 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     var n = 0;
     try {
       final nas = serviceLocator.nasTransferService();
-      final onExternal = state.isExternalSurface &&
+      final onVolume = state.isOnVolume &&
           state.externalVolumePath != null &&
           state.externalVolumePath!.isNotEmpty;
+      final onShareTree = state.isDirectoryTree &&
+          state.treeAnchor == DirectoryTreeAnchor.shareRoot;
       for (final f in files) {
         await nas.enqueueUpload(
           peerFingerprint: peerId!,
           localPath: f.path,
           fileName: f.name,
           sizeBytes: f.size,
-          rootId: onExternal
+          rootId: onVolume
               ? _externalBrowser.rootIdFor(state.externalVolumePath!)
-              : null,
-          directory: onExternal ? state.path : '',
+              : (onShareTree ? 'fs' : null),
+          directory: (onVolume || onShareTree) ? state.path : '',
         );
         n++;
       }

@@ -19,12 +19,37 @@ class ExternalVolumeBrowser {
 
   final StorageVolumes _volumes;
 
-  Future<List<StorageVolumeInfo>> listExternalVolumes() async {
+  /// 可浏览卷：含全部盘符/主卷与可移动卷（定案：目录树整机可访问存储）。
+  Future<List<StorageVolumeInfo>> listBrowsableVolumes() async {
     final all = await _volumes.list();
-    // 非主卷即视为外置（部分机型 OTG 的 isRemovable 标志不可靠）。
-    final external = all
-        .where((v) => !v.isPrimary && v.path.isNotEmpty)
-        .toList(growable: false);
+    final list =
+        all.where((v) => v.path.isNotEmpty).toList(growable: false);
+    AppLogger.log(
+      'listBrowsableVolumes',
+      scope: 'extvol',
+      details: {
+        'allCount': all.length,
+        'count': list.length,
+        'items': [
+          for (final v in list)
+            {
+              'path': v.path,
+              'primary': v.isPrimary,
+              'removable': v.isRemovable,
+              'writable': v.writable,
+              'state': v.state,
+            },
+        ],
+      },
+    );
+    return list;
+  }
+
+  /// 非主卷（OTG/SD）；部分机型 isRemovable 不可靠，以 !isPrimary 为准。
+  Future<List<StorageVolumeInfo>> listExternalVolumes() async {
+    final all = await listBrowsableVolumes();
+    final external =
+        all.where((v) => !v.isPrimary).toList(growable: false);
     AppLogger.log(
       'listExternalVolumes',
       scope: 'extvol',
@@ -234,7 +259,7 @@ class ExternalVolumeBrowser {
 
   /// 卷是否仍挂载（拔盘检测）。
   Future<bool> isVolumeMounted(String volumePath) async {
-    final list = await listExternalVolumes();
+    final list = await listBrowsableVolumes();
     return list.any((v) => isSameVolumePath(v.path, volumePath));
   }
 

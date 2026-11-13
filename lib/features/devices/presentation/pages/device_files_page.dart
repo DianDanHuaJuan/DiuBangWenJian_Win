@@ -54,14 +54,10 @@ class DeviceFilesPage extends StatelessWidget {
 class _DeviceFilesView extends StatelessWidget {
   const _DeviceFilesView();
 
-  /// 浏览层是否应「吃掉」返回。只在外置目录内退一层，不改系统/外置切换。
+  /// 浏览层是否应「吃掉」返回。目录树内退一层，不改媒体墙/目录树切换。
   bool _consumeBrowseBack(DeviceFilesCubit cubit, DeviceFilesState state) {
     if (_exitGridSelection(cubit, state)) return true;
-    if (state.path.isNotEmpty ||
-        (state.isExternalSurface &&
-            state.externalVolumePath != null &&
-            state.externalVolumePath!.isNotEmpty &&
-            state.externalVolumes.length > 1)) {
+    if (state.canGoUpInTree) {
       cubit.goUp();
       return true;
     }
@@ -72,21 +68,15 @@ class _DeviceFilesView extends StatelessWidget {
   /// `canPop: false` + `pop/maybePop` 死循环。
   /// 分类网格多选时，返回只退出多选。
   bool _exitGridSelection(DeviceFilesCubit cubit, DeviceFilesState state) {
-    if (!state.selectionMode || state.isExternalSurface) return false;
+    if (!state.selectionMode || state.isDirectoryTree) return false;
     cubit.exitSelection();
     return true;
   }
 
   bool _interceptSystemBack(DeviceFilesCubit cubit, DeviceFilesState state) {
-    if (state.selectionMode && !state.isExternalSurface) return true;
-    if (state.path.isNotEmpty) return true;
-    if (state.isExternalSurface &&
-        state.externalVolumePath != null &&
-        state.externalVolumePath!.isNotEmpty &&
-        state.externalVolumes.length > 1) {
-      return true;
-    }
-    // 对端根：须 leave + go，不能裸 pop。外置最外层同样离开页面。
+    if (state.selectionMode && !state.isDirectoryTree) return true;
+    if (state.canGoUpInTree) return true;
+    // 对端根：须 leave + go，不能裸 pop。
     return !cubit.isSelf;
   }
 
@@ -108,162 +98,157 @@ class _DeviceFilesView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<DeviceFilesCubit, DeviceFilesState>(
-      builder: (context, state) {
+    return BlocListener<DeviceFilesCubit, DeviceFilesState>(
+      listenWhen: (prev, next) =>
+          next.blockedDirectoryMessage != null &&
+          next.blockedDirectoryMessage != prev.blockedDirectoryMessage,
+      listener: (context, state) {
+        final msg = state.blockedDirectoryMessage;
+        if (msg == null) return;
         final cubit = context.read<DeviceFilesCubit>();
-        final scheme = Theme.of(context).colorScheme;
-        final intercept = _interceptSystemBack(cubit, state);
-
-        return PopScope(
-          // 铁律：canPop==false 时，onPopInvoked 内禁止再 pop/maybePop。
-          canPop: !intercept,
-          onPopInvokedWithResult: (didPop, _) {
-            if (didPop) return;
-            // 此处只做浏览消费或 goToDevicesList（go），绝不 pop。
-            if (_exitGridSelection(cubit, state)) return;
-            if (_consumeBrowseBack(cubit, state)) return;
-            if (!cubit.isSelf) {
-              unawaited(goToDevicesList(context));
-            }
-          },
-          child: Scaffold(
-            backgroundColor: Colors.white,
-            appBar: AppBar(
-              backgroundColor: Colors.white,
-              elevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () => _handleBack(context, state),
+        showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('无法进入'),
+            content: Text(msg),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  cubit.clearBlockedDirectoryMessage();
+                },
+                child: const Text('知道了'),
               ),
-              title: Text(cubit.appBarTitle),
-            ),
-            body: Stack(
-              children: [
-                Positioned.fill(
-                  child: _ExitGridSelectionOffFiles(
-                    child: _PeerFileSignals(
-                    hintEnabled: !cubit.isSelf,
-                    gridSelect: !state.isExternalSurface,
-                    child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // 方案 D：图标+短文案软分段，白滑块选中；对端右侧聊天入口。
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-                        child: Row(
+            ],
+          ),
+        ).whenComplete(cubit.clearBlockedDirectoryMessage);
+      },
+      child: BlocBuilder<DeviceFilesCubit, DeviceFilesState>(
+        builder: (context, state) {
+          final cubit = context.read<DeviceFilesCubit>();
+          final scheme = Theme.of(context).colorScheme;
+          final intercept = _interceptSystemBack(cubit, state);
+          final showUpload = !state.selectionMode &&
+              (!state.isDirectoryTree ||
+                  state.treeAnchor == DirectoryTreeAnchor.shareRoot ||
+                  (state.isOnVolume &&
+                      state.externalVolumePath != null &&
+                      state.externalVolumePath!.isNotEmpty));
+
+          return PopScope(
+            // 铁律：canPop==false 时，onPopInvoked 内禁止再 pop/maybePop。
+            canPop: !intercept,
+            onPopInvokedWithResult: (didPop, _) {
+              if (didPop) return;
+              // 此处只做浏览消费或 goToDevicesList（go），绝不 pop。
+              if (_exitGridSelection(cubit, state)) return;
+              if (_consumeBrowseBack(cubit, state)) return;
+              if (!cubit.isSelf) {
+                unawaited(goToDevicesList(context));
+              }
+            },
+            child: Scaffold(
+              backgroundColor: Colors.white,
+              appBar: AppBar(
+                backgroundColor: Colors.white,
+                elevation: 0,
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () => _handleBack(context, state),
+                ),
+                title: Text(cubit.appBarTitle),
+              ),
+              body: Stack(
+                children: [
+                  Positioned.fill(
+                    child: _ExitGridSelectionOffFiles(
+                      child: _PeerFileSignals(
+                        hintEnabled: !cubit.isSelf,
+                        gridSelect: !state.isDirectoryTree,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _SlidingSurfaceToggle(
-                              localSelected:
-                                  state.surface == LocalBrowseSurface.local,
-                              externalAvailable:
-                                  state.externalVolumes.isNotEmpty,
-                              onSelectLocal: () =>
-                                  cubit.setSurface(LocalBrowseSurface.local),
-                              onSelectExternal: () =>
-                                  cubit.setSurface(LocalBrowseSurface.external),
-                              onExternalUnavailable: () =>
-                                  _showExternalUnavailableTip(
-                                    context,
-                                    isSelf: cubit.isSelf,
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+                              child: Row(
+                                children: [
+                                  _SlidingAccessModeToggle(
+                                    mediaWallSelected: state.isMediaWall,
+                                    onSelectMediaWall: () => cubit
+                                        .setAccessMode(BrowseAccessMode.mediaWall),
+                                    onSelectDirectoryTree: () => cubit
+                                        .setAccessMode(
+                                            BrowseAccessMode.directoryTree),
                                   ),
+                                  const Spacer(),
+                                  if (!cubit.isSelf && cubit.peerId != null)
+                                    _PeerChatAction(peerId: cubit.peerId!),
+                                ],
+                              ),
                             ),
-                            const Spacer(),
-                            if (!cubit.isSelf && cubit.peerId != null)
-                              _PeerChatAction(peerId: cubit.peerId!),
+                            if (state.isDirectoryTree)
+                              _DirectoryTreeToolRow(state: state)
+                            else ...[
+                              if (state.breadcrumbSegments.isNotEmpty)
+                                _BreadcrumbBar(state: state),
+                              Padding(
+                                padding: EdgeInsets.fromLTRB(
+                                  24,
+                                  4,
+                                  24,
+                                  state.selectionMode ? 0 : 12,
+                                ),
+                                child: const _CategoryFilterBar(),
+                              ),
+                            ],
+                            if (state.selectionMode && !state.isDirectoryTree)
+                              _SelectionCountStrip(count: state.selected.length),
+                            if (cubit.isSelf &&
+                                state.isMediaWall &&
+                                !state.category.isMediaLibraryCategory)
+                              _SourceFilterBar(state: state),
+                            if (state.error != null &&
+                                state.blockedDirectoryMessage == null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                                child: Text(
+                                  state.error!,
+                                  style: TextStyle(
+                                    color: scheme.error,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            Expanded(
+                              child: RefreshIndicator(
+                                color: const Color(0xFF3D8A5A),
+                                onRefresh: cubit.refresh,
+                                child: _FilesScrollBody(state: state),
+                              ),
+                            ),
                           ],
                         ),
                       ),
-                      if (state.isExternalSurface &&
-                          state.externalVolumes.length > 1 &&
-                          state.externalVolumePath != null)
-                        _ExternalVolumeChips(state: state),
-                      // 对端外置用下方路径行；其余有子路径时才出面包屑。
-                      if (state.breadcrumbSegments.isNotEmpty &&
-                          (cubit.isSelf || !state.isExternalSurface))
-                        _BreadcrumbBar(state: state),
-                      if (state.isExternalSurface) ...[
-                        if (!cubit.isSelf)
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(24, 0, 8, 4),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: _OtgPathLabel(text: _otgPathLabel(state)),
-                                ),
-                                TextButton.icon(
-                                  onPressed: state.path.isNotEmpty ||
-                                          (state.externalVolumePath != null &&
-                                              state
-                                                  .externalVolumePath!
-                                                  .isNotEmpty &&
-                                              state.externalVolumes.length > 1)
-                                      ? cubit.goUp
-                                      : null,
-                                  icon: const Icon(
-                                    Icons.arrow_upward,
-                                    size: 18,
-                                  ),
-                                  label: const Text('返回上一级'),
-                                ),
-                              ],
-                            ),
-                          ),
-                      ]
-                      else
-                        Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            24,
-                            4,
-                            24,
-                            state.selectionMode ? 0 : 12,
-                          ),
-                          child: const _CategoryFilterBar(),
-                        ),
-                      if (state.selectionMode && !state.isExternalSurface)
-                        _SelectionCountStrip(count: state.selected.length),
-                      if (cubit.isSelf &&
-                          !state.isExternalSurface &&
-                          !state.category.isMediaLibraryCategory)
-                        _SourceFilterBar(state: state),
-                      if (state.error != null)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                          child: Text(
-                            state.error!,
-                            style: TextStyle(color: scheme.error, fontSize: 13),
-                          ),
-                        ),
-                      Expanded(
-                        child: RefreshIndicator(
-                          color: const Color(0xFF3D8A5A),
-                          onRefresh: cubit.refresh,
-                          child: _FilesScrollBody(state: state),
-                        ),
-                      ),
-                    ],
                     ),
                   ),
-                  ),
-                ),
-                if (cubit.canUpload && cubit.peerId != null)
-                  UploadFloatingActions(
-                    peerId: cubit.peerId!,
-                    showUploadAction: !state.selectionMode &&
-                        (!state.isExternalSurface ||
-                            (state.externalVolumePath != null &&
-                                state.externalVolumePath!.isNotEmpty)),
-                    onUploadMediaTap: () => _upload(context, media: true),
-                    onUploadFilesTap: () => _upload(context, media: false),
-                  ),
-                if (!cubit.isSelf &&
-                    state.selectionMode &&
-                    state.isExternalSurface)
-                  const _PeerSelectionBar(),
-              ],
+                  if (cubit.canUpload && cubit.peerId != null)
+                    UploadFloatingActions(
+                      peerId: cubit.peerId!,
+                      showUploadAction: showUpload,
+                      onUploadMediaTap: () => _upload(context, media: true),
+                      onUploadFilesTap: () => _upload(context, media: false),
+                    ),
+                  if (!cubit.isSelf &&
+                      state.selectionMode &&
+                      state.isDirectoryTree)
+                    const _PeerSelectionBar(),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -541,65 +526,214 @@ Future<void> _onCategoryLongPress(
   await engine.stopActive();
 }
 
-void _showExternalUnavailableTip(BuildContext context, {required bool isSelf}) {
-  final message = isSelf ? '未检测到外置存储' : '对端没有外置存储';
-  showDialog<void>(
-    context: context,
-    barrierDismissible: true,
-    barrierColor: Colors.black26,
-    builder: (dialogContext) {
-      Future<void>.delayed(const Duration(seconds: 2), () {
-        if (dialogContext.mounted &&
-            Navigator.of(dialogContext, rootNavigator: true).canPop()) {
-          Navigator.of(dialogContext, rootNavigator: true).pop();
-        }
-      });
-      return Center(
-        child: Material(
-          color: const Color(0xE61A1918),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-            child: Text(
-              message,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
+/// 目录树工具行：左【根目录|OTG】右【返回上一级】，等高对称。
+class _DirectoryTreeToolRow extends StatelessWidget {
+  const _DirectoryTreeToolRow({required this.state});
+
+  final DeviceFilesState state;
+
+  static const _toolH = 36.0;
+  static const _accent = Color(0xFF3D8A5A);
+
+  bool get _otgSideActive {
+    final vol = state.externalVolumePath;
+    if (vol == null || vol.isEmpty) return false;
+    return state.otgVolumes.any(
+      (v) =>
+          v.path == vol ||
+          v.path.replaceAll(r'\', '/') == vol.replaceAll(r'\', '/'),
+    );
+  }
+
+  Future<void> _onGoUp(BuildContext context, DeviceFilesCubit cubit) async {
+    final moved = await cubit.goUp();
+    if (moved || !context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('已回到根目录'),
+          duration: Duration(milliseconds: 1200),
         ),
       );
-    },
-  );
-}
-
-/// 方案 D：淡绿轨 + 白滑块；段内图标+短文案。无外置时「外置」置灰。
-class _SlidingSurfaceToggle extends StatelessWidget {
-  const _SlidingSurfaceToggle({
-    required this.localSelected,
-    required this.externalAvailable,
-    required this.onSelectLocal,
-    required this.onSelectExternal,
-    required this.onExternalUnavailable,
-  });
-
-  final bool localSelected;
-  final bool externalAvailable;
-  final VoidCallback onSelectLocal;
-  final VoidCallback onSelectExternal;
-  final VoidCallback onExternalUnavailable;
-
-  static const _trackH = 36.0;
-  static const _pad = 3.0;
-  static const _segW = 76.0;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 无外置时滑块强制停在「系统」。
-    final onLocal = localSelected || !externalAvailable;
-    final thumbLeft = onLocal ? _pad : _pad + _segW;
+    final cubit = context.read<DeviceFilesCubit>();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: SizedBox(
+        height: _toolH,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _RootOtgToggle(
+              height: _toolH,
+              rootSelected: !_otgSideActive,
+              otgEnabled: state.otgAvailable,
+              onRoot: cubit.goToVolumeRoot,
+              onOtg: state.otgAvailable ? cubit.goToOtg : null,
+            ),
+            const Spacer(),
+            SizedBox(
+              height: _toolH,
+              child: OutlinedButton.icon(
+                onPressed: () => _onGoUp(context, cubit),
+                icon: const Icon(Icons.arrow_upward, size: 18),
+                label: const Text('返回上一级', style: TextStyle(fontSize: 13)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _accent,
+                  side: const BorderSide(color: _accent, width: 1.5),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  minimumSize: const Size(0, _toolH),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「根目录 | OTG」；高度与右侧按钮一致；无 OTG 时右段置灰。
+class _RootOtgToggle extends StatelessWidget {
+  const _RootOtgToggle({
+    required this.rootSelected,
+    required this.otgEnabled,
+    required this.onRoot,
+    required this.onOtg,
+    this.height = 36,
+  });
+
+  final bool rootSelected;
+  final bool otgEnabled;
+  final VoidCallback onRoot;
+  final VoidCallback? onOtg;
+  final double height;
+
+  static const _pad = 2.0;
+  static const _segW = 56.0;
+  static const _accent = Color(0xFF3D8A5A);
+
+  @override
+  Widget build(BuildContext context) {
+    final onRootSide = rootSelected || !otgEnabled;
+    final thumbLeft = onRootSide ? _pad : _pad + _segW;
+    return SizedBox(
+      width: _segW * 2 + _pad * 2,
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFEAF3EC),
+          borderRadius: BorderRadius.circular(height / 2),
+          border: Border.all(color: _accent, width: 1.5),
+        ),
+        child: Stack(
+          children: [
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              left: thumbLeft,
+              top: _pad,
+              width: _segW,
+              height: height - _pad * 2,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular((height - _pad * 2) / 2),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                SizedBox(
+                  width: _segW + _pad,
+                  child: _MiniRootOtgHit(
+                    label: '根目录',
+                    selected: onRootSide,
+                    enabled: true,
+                    onTap: onRoot,
+                  ),
+                ),
+                SizedBox(
+                  width: _segW + _pad,
+                  child: _MiniRootOtgHit(
+                    label: 'OTG',
+                    selected: !onRootSide,
+                    enabled: otgEnabled,
+                    onTap: onOtg ?? () {},
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniRootOtgHit extends StatelessWidget {
+  const _MiniRootOtgHit({
+    required this.label,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = !enabled
+        ? const Color(0xFFC5C2BA)
+        : (selected ? const Color(0xFF3D8A5A) : const Color(0xFF8B867C));
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected && enabled ? FontWeight.w600 : FontWeight.w500,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 媒体 | 目录：淡绿轨 + 白滑块；两端始终可点。
+class _SlidingAccessModeToggle extends StatelessWidget {
+  const _SlidingAccessModeToggle({
+    required this.mediaWallSelected,
+    required this.onSelectMediaWall,
+    required this.onSelectDirectoryTree,
+  });
+
+  final bool mediaWallSelected;
+  final VoidCallback onSelectMediaWall;
+  final VoidCallback onSelectDirectoryTree;
+
+  static const _trackH = 36.0;
+  static const _pad = 3.0;
+  static const _segW = 72.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbLeft = mediaWallSelected ? _pad : _pad + _segW;
     return SizedBox(
       width: _segW * 2 + _pad * 2,
       height: _trackH,
@@ -637,24 +771,22 @@ class _SlidingSurfaceToggle extends StatelessWidget {
                   width: _segW + _pad,
                   child: _SlidingSegHit(
                     padding: const EdgeInsets.only(left: _pad),
-                    icon: Icons.phone_android,
-                    label: BrowseSurfaceLabels.local,
-                    selected: onLocal,
+                    icon: Icons.photo_library_outlined,
+                    label: BrowseSurfaceLabels.mediaWall,
+                    selected: mediaWallSelected,
                     enabled: true,
-                    onTap: onSelectLocal,
+                    onTap: onSelectMediaWall,
                   ),
                 ),
                 SizedBox(
                   width: _segW + _pad,
                   child: _SlidingSegHit(
                     padding: const EdgeInsets.only(right: _pad),
-                    icon: Icons.usb,
-                    label: BrowseSurfaceLabels.external,
-                    selected: !onLocal,
-                    enabled: externalAvailable,
-                    onTap: externalAvailable
-                        ? onSelectExternal
-                        : onExternalUnavailable,
+                    icon: Icons.folder_outlined,
+                    label: BrowseSurfaceLabels.directoryTree,
+                    selected: !mediaWallSelected,
+                    enabled: true,
+                    onTap: onSelectDirectoryTree,
                   ),
                 ),
               ],
@@ -752,8 +884,8 @@ class _FilesScrollBody extends StatelessWidget {
             height: 220,
             child: Center(
               child: Text(
-                state.isExternalSurface && state.externalVolumes.isEmpty
-                    ? '未检测到外置存储'
+                state.isVolumePicker && state.externalVolumes.isEmpty
+                    ? '未检测到可用磁盘'
                     : '当前目录为空',
                 style: TextStyle(color: scheme.onSurfaceVariant),
               ),
@@ -762,43 +894,13 @@ class _FilesScrollBody extends StatelessWidget {
         ],
       );
     }
-    if (state.isExternalSurface) {
+    if (state.isDirectoryTree) {
       return _ExternalListBody(entries: state.visibleEntries);
     }
     return _GridBody(
       entries: state.visibleEntries,
       hasMore: state.hasMore,
       loadingMore: state.loadingMore,
-    );
-  }
-}
-
-class _ExternalVolumeChips extends StatelessWidget {
-  const _ExternalVolumeChips({required this.state});
-
-  final DeviceFilesState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final cubit = context.read<DeviceFilesCubit>();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (final v in state.externalVolumes)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: ChoiceChip(
-                  label: Text(v.description.isEmpty ? 'U盘' : v.description),
-                  selected: state.externalVolumePath == v.path,
-                  onSelected: (_) => cubit.selectExternalVolume(v),
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -833,65 +935,7 @@ class _SourceFilterBar extends StatelessWidget {
   }
 }
 
-class _OtgPathLabel extends StatefulWidget {
-  const _OtgPathLabel({required this.text});
-
-  final String text;
-
-  @override
-  State<_OtgPathLabel> createState() => _OtgPathLabelState();
-}
-
-class _OtgPathLabelState extends State<_OtgPathLabel> {
-  final _scroll = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    _pinEnd();
-  }
-
-  @override
-  void didUpdateWidget(covariant _OtgPathLabel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) _pinEnd();
-  }
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  void _pinEnd() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scroll.hasClients) return;
-      _scroll.jumpTo(_scroll.position.maxScrollExtent);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: _scroll,
-      scrollDirection: Axis.horizontal,
-      child: Text(
-        widget.text,
-        maxLines: 1,
-        softWrap: false,
-        style: const TextStyle(fontSize: 13, color: Color(0xFF2F2E2B)),
-      ),
-    );
-  }
-}
-
-String _otgPathLabel(DeviceFilesState state) {
-  final root = state.rootDisplayName.isEmpty ? '外置存储' : state.rootDisplayName;
-  if (state.path.isEmpty) return root;
-  return '$root / ${state.breadcrumbSegments.join(' / ')}';
-}
-
-/// 外置：列表式文件夹浏览（非媒体分类墙）。
+/// 目录树：列表式文件夹浏览（非媒体分类墙）。
 class _ExternalListBody extends StatefulWidget {
   const _ExternalListBody({required this.entries});
 
@@ -1422,10 +1466,10 @@ double _gridBottomPad(BuildContext context) {
   final cubit = context.read<DeviceFilesCubit>();
   final state = cubit.state;
   final nav = 72 + MediaQuery.viewPaddingOf(context).bottom;
-  if (state.selectionMode && state.isExternalSurface && !cubit.isSelf) {
+  if (state.selectionMode && state.isDirectoryTree && !cubit.isSelf) {
     return 168;
   }
-  if (state.selectionMode && !state.isExternalSurface) {
+  if (state.selectionMode && !state.isDirectoryTree) {
     return nav + 64;
   }
   return 100;
@@ -1468,7 +1512,7 @@ class _ExitGridSelectionOffFilesState extends State<_ExitGridSelectionOffFiles> 
     final cubit = _cubit;
     if (cubit == null) return;
     final state = cubit.state;
-    if (!state.selectionMode || state.isExternalSurface) {
+    if (!state.selectionMode || state.isDirectoryTree) {
       gridSelectionChrome.clear();
       return;
     }
@@ -1496,7 +1540,7 @@ class _ExitGridSelectionOffFilesState extends State<_ExitGridSelectionOffFiles> 
     final path = _router?.routerDelegate.currentConfiguration.uri.path ?? '';
     if (path.endsWith('/files')) return;
     final cubit = context.read<DeviceFilesCubit>();
-    if (!cubit.state.selectionMode || cubit.state.isExternalSurface) return;
+    if (!cubit.state.selectionMode || cubit.state.isDirectoryTree) return;
     cubit.exitSelection();
   }
 

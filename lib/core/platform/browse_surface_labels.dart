@@ -1,8 +1,6 @@
-import 'app_platform.dart';
-
-/// 文件页拨码文案（Android：系统/外置；Windows：当前目录/全盘）。
+/// 文件页访问方式拨码文案（定案：媒体 | 目录）。
 abstract final class BrowseSurfaceLabels {
-  static String get local => AppPlatform.isWindows ? '当前目录' : '系统';
+  static String get mediaWall => '媒体';
 
-  static String get external => AppPlatform.isWindows ? '全盘' : '外置';
+  static String get directoryTree => '目录';
 }

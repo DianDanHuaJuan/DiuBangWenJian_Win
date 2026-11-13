@@ -40,7 +40,10 @@ class ShareReader {
     if (root == null || root.revoked || root.kind != StorageRootKind.path) {
       return const [];
     }
-    if (!_isSafeRelative(relativePath)) return const [];
+    // 空相对路径 = 共享根本身，必须可列；非空才做安全校验。
+    if (relativePath.isNotEmpty && !_isSafeRelative(relativePath)) {
+      return const [];
+    }
 
     final dirPath = relativePath.isEmpty
         ? root.uriOrPath

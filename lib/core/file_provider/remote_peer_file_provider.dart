@@ -17,6 +17,7 @@ class RemoteFilePage {
     required this.hasMore,
     required this.offset,
     required this.limit,
+    this.rootAbsolutePath,
   });
 
   final String rootId;
@@ -25,6 +26,9 @@ class RemoteFilePage {
   final bool hasMore;
   final int offset;
   final int limit;
+
+  /// 共享根绝对路径（目录树从共享根上退到盘内父目录时用）。
+  final String? rootAbsolutePath;
 }
 
 class RemotePeerFileProvider implements FileProvider {
@@ -188,6 +192,7 @@ class RemotePeerFileProvider implements FileProvider {
         },
       );
     }
+    final rootAbs = (map['rootAbsolutePath'] as String?)?.trim();
     return RemoteFilePage(
       rootId: resolvedRoot,
       items: entries,
@@ -195,6 +200,8 @@ class RemotePeerFileProvider implements FileProvider {
       hasMore: hasMore,
       offset: (map['offset'] as num?)?.toInt() ?? offset,
       limit: (map['limit'] as num?)?.toInt() ?? (limit > 0 ? limit : entries.length),
+      rootAbsolutePath:
+          (rootAbs != null && rootAbs.isNotEmpty) ? rootAbs : null,
     );
   }
 
