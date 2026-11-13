@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../app/di/service_locator.dart';
+import '../../../../core/common/app_logger.dart';
 import '../../../../core/file_provider/file_entry.dart';
 import '../../../../core/storage/storage_root_store.dart';
 import '../../../../core/file_provider/file_provider.dart';
@@ -211,6 +212,22 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     if (entry.isDirectory || (!entry.isImage && !entry.isVideo)) {
       return false;
     }
+    if (entry.isVideo) {
+      AppLogger.log(
+        'openMediaPreview video',
+        scope: 'video_diag',
+        details: {
+          'isSelf': isSelf,
+          'peerId': peerId ?? '',
+          'name': entry.name,
+          'rootId': entry.rootId,
+          'path': entry.relativePath,
+          'absolutePath': entry.absolutePath ?? '',
+          'surface': state.surface.name,
+          'externalVolumePath': state.externalVolumePath ?? '',
+        },
+      );
+    }
     var media = state.mediaEntries;
     if (media.isEmpty) {
       media = state.visibleEntries
@@ -303,14 +320,49 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   }
 
   Future<void> _probeExternalVolumes() async {
+    AppLogger.log(
+      'probeExternalVolumes start',
+      scope: 'extvol_diag',
+      details: {
+        'isSelf': isSelf,
+        'peerId': peerId ?? '',
+        'prevSelected': state.externalVolumePath ?? '',
+      },
+    );
     final vols = isSelf
         ? await _externalBrowser.listExternalVolumes()
         : await _listRemoteExternalVolumes();
+    AppLogger.log(
+      'probeExternalVolumes done',
+      scope: 'extvol_diag',
+      details: {
+        'count': vols.length,
+        'vols': [
+          for (final v in vols)
+            {
+              'path': v.path,
+              'rootId': v.rootId.isNotEmpty
+                  ? v.rootId
+                  : _externalBrowser.rootIdFor(v.path),
+              'desc': v.description,
+              'primary': v.isPrimary,
+            },
+        ],
+      },
+    );
     emit(state.copyWith(externalVolumes: vols));
     final selected = state.externalVolumePath;
     if (selected != null &&
         selected.isNotEmpty &&
-        !vols.any((v) => v.path == selected)) {
+        !vols.any((v) => _externalBrowser.isSameVolumePath(v.path, selected))) {
+      AppLogger.log(
+        'probeExternalVolumes selected missing → fallback local',
+        scope: 'extvol_diag',
+        details: {
+          'selected': selected,
+          'available': [for (final v in vols) v.path],
+        },
+      );
       // 拔盘：退回系统存储。
       emit(
         state.copyWith(
@@ -326,13 +378,32 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
 
   Future<List<StorageVolumeInfo>> _listRemoteExternalVolumes() async {
     final id = peerId;
-    if (id == null || id.isEmpty) return const [];
+    if (id == null || id.isEmpty) {
+      AppLogger.log(
+        'listRemoteExternalVolumes skip empty peerId',
+        scope: 'extvol_diag',
+      );
+      return const [];
+    }
+    AppLogger.log(
+      'listRemoteExternalVolumes GET /storage/volumes',
+      scope: 'extvol_diag',
+      details: {'peerId': id},
+    );
     final response = await serviceLocator.peerApiClient().get(
           id,
           NasApiPaths.storageVolumes,
           receiveTimeout: const Duration(seconds: 20),
         );
     if (response == null || response.statusCode != 200) {
+      AppLogger.log(
+        'listRemoteExternalVolumes HTTP fail',
+        scope: 'extvol_diag',
+        details: {
+          'status': response?.statusCode,
+          'nullResponse': response == null,
+        },
+      );
       throw Exception(
         response?.statusCode == 503
             ? '对端未开启 NAS'
@@ -344,15 +415,47 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         ? Map<String, dynamic>.from(data)
         : <String, dynamic>{};
     final items = map['items'] as List<dynamic>? ?? const [];
-    return items
-        .whereType<Map>()
+    final raw = items.whereType<Map>().toList(growable: false);
+    final filtered = raw
         .map((e) => StorageVolumeInfo.fromMap(e))
         .where((v) => v.path.isNotEmpty && !v.isPrimary)
         .toList(growable: false);
+    AppLogger.log(
+      'listRemoteExternalVolumes parsed',
+      scope: 'extvol_diag',
+      details: {
+        'httpCount': map['count'],
+        'rawItems': [
+          for (final e in raw)
+            {
+              'path': e['path'],
+              'rootId': e['rootId'],
+              'isPrimary': e['isPrimary'],
+              'description': e['description'],
+            },
+        ],
+        'filteredCount': filtered.length,
+        'filtered': [
+          for (final v in filtered)
+            {
+              'path': v.path,
+              'rootId': v.rootId,
+              'clientRootId': _externalBrowser.rootIdFor(v.path),
+              'desc': v.description,
+            },
+        ],
+      },
+    );
+    return filtered;
   }
 
   Future<void> setSurface(LocalBrowseSurface surface) async {
     if (surface == LocalBrowseSurface.external) {
+      AppLogger.log(
+        'setSurface → external',
+        scope: 'extvol_diag',
+        details: {'isSelf': isSelf, 'peerId': peerId ?? ''},
+      );
       if (isSelf) {
         // 列外置卷通常需要全部文件访问。
         try {
@@ -362,10 +465,20 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       try {
         await _probeExternalVolumes();
       } catch (e) {
+        AppLogger.log(
+          'setSurface probe failed',
+          scope: 'extvol_diag',
+          error: e,
+        );
         emit(state.copyWith(error: '$e'));
         return;
       }
       if (state.externalVolumes.isEmpty) {
+        AppLogger.log(
+          'setSurface external empty volumes',
+          scope: 'extvol_diag',
+          details: {'isSelf': isSelf},
+        );
         emit(
           state.copyWith(
             error: isSelf
@@ -378,12 +491,24 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       final vols = state.externalVolumes;
       if (vols.length == 1) {
         final only = vols.first;
+        final rootId = only.rootId.isNotEmpty
+            ? only.rootId
+            : _externalBrowser.rootIdFor(only.path);
+        AppLogger.log(
+          'setSurface single volume → enter',
+          scope: 'extvol_diag',
+          details: {
+            'path': only.path,
+            'rootId': rootId,
+            'desc': only.description,
+          },
+        );
         emit(
           state.copyWith(
             surface: LocalBrowseSurface.external,
             externalVolumePath: only.path,
             path: '',
-            rootId: _externalBrowser.rootIdFor(only.path),
+            rootId: rootId,
             rootDisplayName:
                 only.description.isEmpty ? '外置存储' : only.description,
             selectionMode: false,
@@ -394,6 +519,20 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         );
       } else {
         // 多卷：先列卷，再点入。
+        AppLogger.log(
+          'setSurface multi volume → volume list',
+          scope: 'extvol_diag',
+          details: {
+            'count': vols.length,
+            'paths': [for (final v in vols) v.path],
+            'rootIds': [
+              for (final v in vols)
+                v.rootId.isNotEmpty
+                    ? v.rootId
+                    : _externalBrowser.rootIdFor(v.path),
+            ],
+          },
+        );
         emit(
           state.copyWith(
             surface: LocalBrowseSurface.external,
@@ -427,12 +566,26 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
 
   Future<void> selectExternalVolume(StorageVolumeInfo volume) async {
     final volPath = ExternalVolumeBrowser.normalizePath(volume.path);
+    final rootId = volume.rootId.isNotEmpty
+        ? volume.rootId
+        : _externalBrowser.rootIdFor(volPath);
+    AppLogger.log(
+      'selectExternalVolume',
+      scope: 'extvol_diag',
+      details: {
+        'rawPath': volume.path,
+        'volPath': volPath,
+        'rootId': rootId,
+        'desc': volume.description,
+        'isSelf': isSelf,
+      },
+    );
     emit(
       state.copyWith(
         surface: LocalBrowseSurface.external,
         externalVolumePath: volPath,
         path: '',
-        rootId: _externalBrowser.rootIdFor(volPath),
+        rootId: rootId,
         rootDisplayName:
             volume.description.isEmpty ? '外置存储' : volume.description,
         selectionMode: false,
@@ -447,6 +600,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   Future<void> _refreshExternal() async {
     final vols = state.externalVolumes;
     if (vols.isEmpty) {
+      AppLogger.log('_refreshExternal empty volumes', scope: 'extvol_diag');
       emit(
         state.copyWith(
           loading: false,
@@ -463,7 +617,24 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     if (volPath == null || volPath.isEmpty) {
       volPath = vols.first.path;
     }
+    AppLogger.log(
+      '_refreshExternal enter',
+      scope: 'extvol_diag',
+      details: {
+        'volPath': volPath,
+        'stateExternalVolumePath': state.externalVolumePath ?? '',
+        'statePath': state.path,
+        'stateRootId': state.rootId,
+        'volsCount': vols.length,
+        'isSelf': isSelf,
+      },
+    );
     if (isSelf && !await _externalBrowser.isVolumeMounted(volPath)) {
+      AppLogger.log(
+        '_refreshExternal not mounted',
+        scope: 'extvol_diag',
+        details: {'volPath': volPath},
+      );
       emit(
         state.copyWith(
           loading: false,
@@ -503,6 +674,20 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
             absolutePath: v.path,
           ),
       ];
+      AppLogger.log(
+        '_refreshExternal show volume picker',
+        scope: 'extvol_diag',
+        details: {
+          'entries': [
+            for (final e in volumeEntries)
+              {
+                'name': e.name,
+                'rootId': e.rootId,
+                'absolutePath': e.absolutePath,
+              },
+          ],
+        },
+      );
       emit(
         state.copyWith(
           loading: false,
@@ -520,7 +705,17 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     }
 
     final List<FileEntry> entries;
+    final requestRootId = _externalBrowser.rootIdFor(volPath);
     if (isSelf) {
+      AppLogger.log(
+        '_refreshExternal local listDirectory',
+        scope: 'extvol_diag',
+        details: {
+          'volPath': volPath,
+          'rel': state.path,
+          'rootId': requestRootId,
+        },
+      );
       entries = await _externalBrowser.listDirectory(
         volumePath: volPath,
         volumeLabel: label.isEmpty ? '外置存储' : label,
@@ -528,19 +723,34 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       );
     } else {
       final remote = _provider as RemotePeerFileProvider;
+      AppLogger.log(
+        '_refreshExternal remote GET /files',
+        scope: 'extvol_diag',
+        details: {
+          'rootId': requestRootId,
+          'path': state.path,
+          'volPath': volPath,
+          'peerId': peerId ?? '',
+        },
+      );
       final page = await remote.listPage(
-        rootId: _externalBrowser.rootIdFor(volPath),
+        rootId: requestRootId,
         path: state.path,
         limit: 0,
       );
       entries = page.items;
+      AppLogger.log(
+        '_refreshExternal remote /files ok',
+        scope: 'extvol_diag',
+        details: {'rootId': page.rootId, 'count': entries.length},
+      );
     }
     emit(
       state.copyWith(
         loading: false,
         loadingMore: false,
         entries: entries,
-        rootId: _externalBrowser.rootIdFor(volPath),
+        rootId: requestRootId,
         rootDisplayName: label.isEmpty ? '外置存储' : label,
         externalVolumePath: volPath,
         hasMore: false,
@@ -781,6 +991,31 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     if (!entry.isDirectory) return;
     if (state.isExternalSurface) {
       final volPath = _externalBrowser.volumePathFromRootId(entry.rootId);
+      final matchRows = [
+        for (final v in state.externalVolumes)
+          {
+            'v.path': v.path,
+            'eq_strict': v.path == volPath,
+            'eq_same': volPath != null &&
+                _externalBrowser.isSameVolumePath(v.path, volPath),
+          },
+      ];
+      AppLogger.log(
+        'openEntry external',
+        scope: 'extvol_diag',
+        details: {
+          'entry.name': entry.name,
+          'entry.rootId': entry.rootId,
+          'entry.relativePath': entry.relativePath,
+          'entry.absolutePath': entry.absolutePath ?? '',
+          'decodedVolPath': volPath ?? '',
+          'state.externalVolumePath': state.externalVolumePath ?? '',
+          'willTryVolumePick': volPath != null &&
+              entry.relativePath.isEmpty &&
+              state.externalVolumePath == null,
+          'volumeMatch': matchRows,
+        },
+      );
       // 多卷列表点入某一卷（路径比较兼容 C:\ / C:/）。
       if (volPath != null &&
           entry.relativePath.isEmpty &&
@@ -799,10 +1034,27 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
           isRemovable: false,
           writable: true,
         );
+        AppLogger.log(
+          'openEntry volume pick → selectExternalVolume',
+          scope: 'extvol_diag',
+          details: {
+            'matchedFromList': matchRows.any((m) => m['eq_same'] == true),
+            'selectedPath': vol.path,
+          },
+        );
         await selectExternalVolume(vol);
         return;
       }
     }
+    AppLogger.log(
+      'openEntry fallback → refresh with entry path',
+      scope: 'extvol_diag',
+      details: {
+        'rootId': entry.rootId,
+        'path': entry.relativePath,
+        'isExternal': state.isExternalSurface,
+      },
+    );
     emit(
       state.copyWith(
         rootId: entry.rootId,

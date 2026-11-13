@@ -6,6 +6,7 @@ import 'package:shelf/shelf.dart';
 
 import '../../../../../core/auth/peer_fingerprint_middleware.dart';
 import '../../../../../core/common/app_logger.dart';
+import '../../../../../core/http/content_disposition.dart';
 import '../../../../../core/identity/peer.dart';
 import '../../../../../core/protocol/nas_api_paths.dart';
 import '../../../../../core/storage/app_paths.dart';
@@ -35,46 +36,59 @@ class StorageVolumesHandler {
         }
         try {
           if (shareScope?.isCustom == true) {
+            AppLogger.log(
+              'storage/volumes skipped (custom shareScope)',
+              scope: 'extvol_diag',
+              details: {
+                'peer': peer.fingerprint.length > 12
+                    ? '${peer.fingerprint.substring(0, 12)}…'
+                    : peer.fingerprint,
+              },
+            );
             return Response.ok(
               jsonEncode({'count': 0, 'items': <Map<String, dynamic>>[]}),
               headers: {'content-type': 'application/json; charset=utf-8'},
             );
           }
           final vols = await _browser.listExternalVolumes();
+          final items = [
+            for (final v in vols)
+              {
+                // 给客户端现成 rootId，避免手机端自行拼接盘符踩坑。
+                'rootId': ExternalVolumeBrowser().rootIdFor(v.path),
+                'path': AppPaths.portable(v.path),
+                'description': v.description,
+                'isPrimary': v.isPrimary,
+                'isRemovable': v.isRemovable,
+                'writable': v.writable,
+                'state': v.state,
+                // 提示：这是磁盘卷，不是普通文件夹（旧客户端可忽略）。
+                'kind': 'volume',
+                'entryKind': 'disk',
+              },
+          ];
           AppLogger.log(
             'storage/volumes ok',
-            scope: 'nas_files',
+            scope: 'extvol_diag',
             details: {
               'count': vols.length,
-              'paths': [for (final v in vols) v.path],
+              'peer': peer.fingerprint.length > 12
+                  ? '${peer.fingerprint.substring(0, 12)}…'
+                  : peer.fingerprint,
+              'items': items,
             },
           );
           return Response.ok(
             jsonEncode({
               'count': vols.length,
-              'items': [
-                for (final v in vols)
-                  {
-                    // 给客户端现成 rootId，避免手机端自行拼接盘符踩坑。
-                    'rootId': ExternalVolumeBrowser().rootIdFor(v.path),
-                    'path': AppPaths.portable(v.path),
-                    'description': v.description,
-                    'isPrimary': v.isPrimary,
-                    'isRemovable': v.isRemovable,
-                    'writable': v.writable,
-                    'state': v.state,
-                    // 提示：这是磁盘卷，不是普通文件夹（旧客户端可忽略）。
-                    'kind': 'volume',
-                    'entryKind': 'disk',
-                  },
-              ],
+              'items': items,
             }),
             headers: {'content-type': 'application/json; charset=utf-8'},
           );
         } catch (e, st) {
           AppLogger.log(
             'storage/volumes failed',
-            scope: 'nas_files',
+            scope: 'extvol_diag',
             error: e,
             stackTrace: st,
           );
@@ -118,12 +132,15 @@ class FileListHandler {
         var rootId = request.url.queryParameters['rootId'] ?? '';
         final relPath =
             AppPaths.portable(request.url.queryParameters['path'] ?? '');
+        final isExtvol =
+            rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix);
         AppLogger.log(
           'GET /files',
-          scope: 'nas_files',
+          scope: isExtvol ? 'extvol_diag' : 'nas_files',
           details: {
             'rootId': rootId,
             'path': relPath,
+            'isExtvol': isExtvol,
             'peer': peer.fingerprint.length > 12
                 ? '${peer.fingerprint.substring(0, 12)}…'
                 : peer.fingerprint,
@@ -149,7 +166,7 @@ class FileListHandler {
             return _libraryResponse(relPath, offset: offset, limit: limit);
           }
 
-          if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
+          if (isExtvol) {
             return _externalResponse(rootId, relPath);
           }
 
@@ -215,10 +232,19 @@ class FileListHandler {
 
   Future<Response> _externalResponse(String rootId, String relPath) async {
     final volPath = externalBrowser.volumePathFromRootId(rootId);
+    AppLogger.log(
+      'extvol _externalResponse',
+      scope: 'extvol_diag',
+      details: {
+        'rootId': rootId,
+        'decodedVolPath': volPath ?? '',
+        'relPath': relPath,
+      },
+    );
     if (volPath == null || volPath.isEmpty) {
       AppLogger.log(
         'extvol bad rootId',
-        scope: 'nas_files',
+        scope: 'extvol_diag',
         details: {'rootId': rootId},
       );
       return Response.badRequest(body: 'invalid external rootId');
@@ -227,25 +253,42 @@ class FileListHandler {
     if (!mounted) {
       AppLogger.log(
         'extvol not mounted',
-        scope: 'nas_files',
-        details: {'volPath': volPath},
+        scope: 'extvol_diag',
+        details: {'volPath': volPath, 'rootId': rootId},
       );
       await StorageAccessDiagnostics.logSnapshot('extvol_not_mounted');
       return Response.notFound('external volume not mounted');
     }
     if (relPath.isNotEmpty &&
         (relPath.contains('..') || relPath.startsWith('/'))) {
+      AppLogger.log(
+        'extvol forbidden path',
+        scope: 'extvol_diag',
+        details: {'relPath': relPath},
+      );
       return Response.forbidden('invalid path');
     }
     final vols = await externalBrowser.listExternalVolumes();
     var label = '外置存储';
+    var matchedVol = false;
     for (final v in vols) {
-      if (externalBrowser.isSameVolumePath(v.path, volPath) &&
-          v.description.isNotEmpty) {
-        label = v.description;
+      if (externalBrowser.isSameVolumePath(v.path, volPath)) {
+        matchedVol = true;
+        if (v.description.isNotEmpty) label = v.description;
         break;
       }
     }
+    AppLogger.log(
+      'extvol before listDirectory',
+      scope: 'extvol_diag',
+      details: {
+        'volPath': volPath,
+        'matchedVol': matchedVol,
+        'label': label,
+        'knownVols': [for (final v in vols) v.path],
+        'shareScopeCustom': shareScope?.isCustom == true,
+      },
+    );
     try {
       var entries = await externalBrowser.listDirectory(
         volumePath: volPath,
@@ -263,12 +306,16 @@ class FileListHandler {
       }
       AppLogger.log(
         'extvol list ok',
-        scope: 'nas_files',
+        scope: 'extvol_diag',
         details: {
           'volPath': volPath,
           'path': relPath,
           'count': entries.length,
           'label': label,
+          'sample': [
+            for (final e in entries.take(5))
+              {'name': e.name, 'dir': e.isDirectory, 'rel': e.relativePath},
+          ],
         },
       );
       return Response.ok(
@@ -294,10 +341,10 @@ class FileListHandler {
     } catch (e, st) {
       AppLogger.log(
         'extvol list failed',
-        scope: 'nas_files',
+        scope: 'extvol_diag',
         error: e,
         stackTrace: st,
-        details: {'volPath': volPath, 'path': relPath},
+        details: {'volPath': volPath, 'path': relPath, 'rootId': rootId},
       );
       await StorageAccessDiagnostics.logSnapshot('extvol_list_failed');
       rethrow;
@@ -454,7 +501,25 @@ class FileContentHandler {
               request.url.queryParameters['name'] ??
               '',
         );
+        final range = request.headers['range'] ?? '';
+        AppLogger.log(
+          'GET /files/content',
+          scope: 'video_diag',
+          details: {
+            'rootId': rootId,
+            'path': rel,
+            'range': range,
+            'peer': peer.fingerprint.length > 12
+                ? '${peer.fingerprint.substring(0, 12)}…'
+                : peer.fingerprint,
+          },
+        );
         if (rootId.isEmpty || rel.isEmpty) {
+          AppLogger.log(
+            'content bad request (empty rootId/path)',
+            scope: 'video_diag',
+            details: {'rootId': rootId, 'path': rel},
+          );
           return Response.badRequest(body: 'rootId and path required');
         }
         if (rootId == MediaLibraryService.rootId) {
@@ -463,6 +528,11 @@ class FileContentHandler {
         if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
           final volPath = externalBrowser.volumePathFromRootId(rootId);
           if (volPath == null) {
+            AppLogger.log(
+              'content bad extvol rootId',
+              scope: 'video_diag',
+              details: {'rootId': rootId},
+            );
             return Response.badRequest(body: 'invalid external rootId');
           }
           try {
@@ -473,27 +543,44 @@ class FileContentHandler {
             if (file == null) {
               AppLogger.log(
                 'extvol content not found',
-                scope: 'nas_files',
-                details: {'volPath': volPath, 'path': rel},
+                scope: 'video_diag',
+                details: {'volPath': volPath, 'path': rel, 'rootId': rootId},
               );
               return Response.notFound('file not found');
             }
             if (shareScope?.isCustom == true && !shareScope!.allows(file.path)) {
+              AppLogger.log(
+                'extvol content denied by shareScope',
+                scope: 'video_diag',
+                details: {'file': file.path},
+              );
               return Response.notFound('file not found');
             }
             final length = await file.length();
             final name = p.basename(file.path);
+            final mime = MimeTypes.fromFileNameOrOctet(name);
+            AppLogger.log(
+              'extvol content resolve ok',
+              scope: 'video_diag',
+              details: {
+                'volPath': volPath,
+                'file': file.path,
+                'length': length,
+                'mime': mime,
+                'range': range,
+              },
+            );
             return fileRangeResponse(
               request: request,
               file: file,
               length: length,
               fileName: name,
-              mimeType: MimeTypes.fromFileNameOrOctet(name),
+              mimeType: mime,
             );
           } catch (e, st) {
             AppLogger.log(
               'extvol content failed',
-              scope: 'nas_files',
+              scope: 'video_diag',
               error: e,
               stackTrace: st,
               details: {'volPath': volPath, 'path': rel},
@@ -551,8 +638,20 @@ class FileContentHandler {
 
   Future<Response> _libraryContent(Request request, String rel) async {
     final asset = await mediaLibrary.findByRelativePath(rel);
-    if (asset == null) return Response.notFound('file not found');
+    if (asset == null) {
+      AppLogger.log(
+        'library content not found',
+        scope: 'video_diag',
+        details: {'path': rel},
+      );
+      return Response.notFound('file not found');
+    }
     if (shareScope?.isCustom == true && !_inShareScope(asset)) {
+      AppLogger.log(
+        'library content denied by shareScope',
+        scope: 'video_diag',
+        details: {'path': rel},
+      );
       return Response.notFound('file not found');
     }
     final path = asset.absolutePath;
@@ -560,19 +659,43 @@ class FileContentHandler {
       final file = File(path);
       if (await file.exists()) {
         final length = await file.length();
+        final mime = asset.mimeType.isEmpty
+            ? 'application/octet-stream'
+            : asset.mimeType;
+        AppLogger.log(
+          'library content resolve ok',
+          scope: 'video_diag',
+          details: {
+            'path': rel,
+            'file': path,
+            'length': length,
+            'mime': mime,
+            'range': request.headers['range'] ?? '',
+          },
+        );
         return fileRangeResponse(
           request: request,
           file: file,
           length: length,
           fileName: asset.displayName.isEmpty ? asset.id : asset.displayName,
-          mimeType: asset.mimeType.isEmpty
-              ? 'application/octet-stream'
-              : asset.mimeType,
+          mimeType: mime,
         );
       }
     }
     final bytes = await mediaLibrary.readBytes(asset);
-    if (bytes == null) return Response.notFound('file not found');
+    if (bytes == null) {
+      AppLogger.log(
+        'library content bytes null',
+        scope: 'video_diag',
+        details: {'path': rel},
+      );
+      return Response.notFound('file not found');
+    }
+    AppLogger.log(
+      'library content bytes ok',
+      scope: 'video_diag',
+      details: {'path': rel, 'length': bytes.length},
+    );
     return Response.ok(
       bytes,
       headers: {
@@ -580,7 +703,8 @@ class FileContentHandler {
             asset.mimeType.isEmpty ? 'application/octet-stream' : asset.mimeType,
         'content-length': '${bytes.length}',
         'accept-ranges': 'bytes',
-        'content-disposition': 'attachment; filename="${asset.displayName}"',
+        'content-disposition':
+            ContentDisposition.attachment(asset.displayName),
       },
     );
   }
@@ -593,9 +717,20 @@ Response fileRangeResponse({
   required String fileName,
   required String mimeType,
 }) {
-  final disposition = 'inline; filename="$fileName"';
+  // 播流用 inline、不带 filename，避免非 ASCII 文件名炸 dart:io 头校验。
+  const disposition = ContentDisposition.inline;
   final rangeHeader = request.headers['range'];
   if (rangeHeader == null || !rangeHeader.startsWith('bytes=')) {
+    AppLogger.log(
+      'fileRangeResponse 200 full',
+      scope: 'video_diag',
+      details: {
+        'file': file.path,
+        'length': length,
+        'mime': mimeType,
+        'name': fileName,
+      },
+    );
     return Response.ok(
       openFileChunked(file, chunkSize: kNasFileReadChunkBytes),
       headers: {
@@ -609,6 +744,11 @@ Response fileRangeResponse({
   final spec = rangeHeader.substring(6);
   final dash = spec.indexOf('-');
   if (dash < 0) {
+    AppLogger.log(
+      'fileRangeResponse 416 bad range',
+      scope: 'video_diag',
+      details: {'range': rangeHeader, 'length': length},
+    );
     return Response(416, headers: {'content-range': 'bytes */$length'});
   }
   final startStr = spec.substring(0, dash);
@@ -618,9 +758,26 @@ Response fileRangeResponse({
   if (start < 0) start = 0;
   if (end >= length) end = length - 1;
   if (start > end || start >= length) {
+    AppLogger.log(
+      'fileRangeResponse 416 out of range',
+      scope: 'video_diag',
+      details: {'range': rangeHeader, 'length': length},
+    );
     return Response(416, headers: {'content-range': 'bytes */$length'});
   }
   final chunkLen = end - start + 1;
+  AppLogger.log(
+    'fileRangeResponse 206',
+    scope: 'video_diag',
+    details: {
+      'file': file.path,
+      'start': start,
+      'end': end,
+      'chunkLen': chunkLen,
+      'total': length,
+      'mime': mimeType,
+    },
+  );
   return Response(
     206,
     body: openFileChunked(

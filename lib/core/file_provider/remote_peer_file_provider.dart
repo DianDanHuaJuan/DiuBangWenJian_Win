@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../common/app_logger.dart';
 import '../network/peer_api_client.dart';
 import '../protocol/nas_api_paths.dart';
 import '../storage/media_library_service.dart';
@@ -90,6 +91,20 @@ class RemotePeerFileProvider implements FileProvider {
     int offset = 0,
     int limit = 0,
   }) async {
+    final isExtvol = rootId.startsWith('extvol:');
+    if (isExtvol) {
+      AppLogger.log(
+        'RemotePeerFileProvider GET /files',
+        scope: 'extvol_diag',
+        details: {
+          'peer': peerFingerprint.length > 12
+              ? '${peerFingerprint.substring(0, 12)}…'
+              : peerFingerprint,
+          'rootId': rootId,
+          'path': path,
+        },
+      );
+    }
     final response = await _api.get(
       peerFingerprint,
       NasApiPaths.files,
@@ -103,6 +118,13 @@ class RemotePeerFileProvider implements FileProvider {
       receiveTimeout: const Duration(seconds: 60),
     );
     if (response == null) {
+      if (isExtvol) {
+        AppLogger.log(
+          'RemotePeerFileProvider /files unreachable',
+          scope: 'extvol_diag',
+          details: {'rootId': rootId, 'path': path},
+        );
+      }
       throw Exception('对端不可达（拨号失败或超时）');
     }
     if (response.statusCode == 503) {
@@ -112,6 +134,17 @@ class RemotePeerFileProvider implements FileProvider {
       throw Exception('对端拒绝访问，请重新配对');
     }
     if (response.statusCode != 200) {
+      if (isExtvol) {
+        AppLogger.log(
+          'RemotePeerFileProvider /files HTTP error',
+          scope: 'extvol_diag',
+          details: {
+            'status': response.statusCode,
+            'rootId': rootId,
+            'path': path,
+          },
+        );
+      }
       throw Exception('对端返回错误 HTTP ${response.statusCode}');
     }
     final map = _asMap(response.data);
@@ -143,6 +176,18 @@ class RemotePeerFileProvider implements FileProvider {
     final total = (map['total'] as num?)?.toInt() ?? entries.length;
     final hasMore = map['hasMore'] == true ||
         (limit > 0 && offset + entries.length < total);
+    if (isExtvol) {
+      AppLogger.log(
+        'RemotePeerFileProvider /files ok',
+        scope: 'extvol_diag',
+        details: {
+          'rootId': resolvedRoot,
+          'path': path,
+          'count': entries.length,
+          'total': total,
+        },
+      );
+    }
     return RemoteFilePage(
       rootId: resolvedRoot,
       items: entries,

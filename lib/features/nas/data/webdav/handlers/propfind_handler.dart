@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
 
 import '../../../../../core/auth/peer_fingerprint_middleware.dart';
+import '../../../../../core/http/content_disposition.dart';
 import '../../../../../core/identity/peer.dart';
 import '../../../../../core/storage/file_chunk_stream.dart';
 import '../../../../../core/storage/share_reader.dart';
@@ -197,7 +198,7 @@ class DavGetHandler {
           'content-type': 'application/octet-stream',
           'content-length': '$length',
           'content-disposition':
-              'attachment; filename="${p.basename(file.path)}"',
+              ContentDisposition.attachment(p.basename(file.path)),
         };
         if (request.method.toUpperCase() == 'HEAD') {
           return Response.ok(null, headers: headers);

@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../../../app/di/service_locator.dart';
+import '../../../../core/common/app_logger.dart';
 import '../../../../core/file_provider/file_entry.dart';
 import '../../../../core/protocol/nas_api_paths.dart';
 import '../../../../core/storage/external_volume_browser.dart';
@@ -462,6 +463,15 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
 
   Future<void> _ensureVideo() async {
     if (_video.isReady) {
+      AppLogger.log(
+        '_ensureVideo already ready → play',
+        scope: 'video_diag',
+        details: {
+          'name': widget.entry.name,
+          'rootId': widget.entry.rootId,
+          'isActive': widget.isActive,
+        },
+      );
       if (widget.isActive) await _video.play();
       return;
     }
@@ -470,6 +480,26 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
       _loading = true;
       _error = null;
     });
+
+    AppLogger.log(
+      '_ensureVideo start',
+      scope: 'video_diag',
+      details: {
+        'isSelf': widget.isSelf,
+        'peer': widget.peerFingerprint == null
+            ? ''
+            : (widget.peerFingerprint!.length > 12
+                ? '${widget.peerFingerprint!.substring(0, 12)}…'
+                : widget.peerFingerprint!),
+        'name': widget.entry.name,
+        'rootId': widget.entry.rootId,
+        'path': widget.entry.relativePath,
+        'absolutePath': widget.entry.absolutePath ?? '',
+        'isActive': widget.isActive,
+        'isExtvol': widget.entry.rootId
+            .startsWith(ExternalVolumeBrowser.rootIdPrefix),
+      },
+    );
 
     try {
       if (widget.isSelf) {
@@ -490,6 +520,11 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
         if (path == null || path.isEmpty) {
           throw Exception('本地视频不可用');
         }
+        AppLogger.log(
+          '_ensureVideo openLocal',
+          scope: 'video_diag',
+          details: {'path': path},
+        );
         await _video.openLocal(path, play: widget.isActive);
       } else {
         final fp = widget.peerFingerprint;
@@ -503,7 +538,31 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
                     'path': widget.entry.relativePath,
                   },
                 );
-        if (target == null) throw Exception('无法解析播放地址');
+        if (target == null) {
+          AppLogger.log(
+            '_ensureVideo authenticatedGetTarget null',
+            scope: 'video_diag',
+            details: {
+              'rootId': widget.entry.rootId,
+              'path': widget.entry.relativePath,
+            },
+          );
+          throw Exception('无法解析播放地址');
+        }
+        AppLogger.log(
+          '_ensureVideo openRemote',
+          scope: 'video_diag',
+          details: {
+            'url': target.url,
+            'headerKeys': target.headers.keys.toList(growable: false),
+            'hasAuthorization': target.headers.keys.any(
+              (k) => k.toLowerCase() == 'authorization',
+            ),
+            'hasPeerFingerprint': target.headers.keys.any(
+              (k) => k.toLowerCase() == 'x-peer-fingerprint',
+            ),
+          },
+        );
         await _video.openRemote(
           url: target.url,
           headers: target.headers,
@@ -515,10 +574,29 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
         await _video.dispose();
         return;
       }
+      AppLogger.log(
+        '_ensureVideo ok',
+        scope: 'video_diag',
+        details: {
+          'name': widget.entry.name,
+          'rootId': widget.entry.rootId,
+        },
+      );
       setState(() {
         _loading = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      AppLogger.log(
+        '_ensureVideo failed',
+        scope: 'video_diag',
+        error: e,
+        stackTrace: st,
+        details: {
+          'name': widget.entry.name,
+          'rootId': widget.entry.rootId,
+          'path': widget.entry.relativePath,
+        },
+      );
       if (!mounted) return;
       setState(() {
         _loading = false;
