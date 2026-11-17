@@ -2,7 +2,6 @@ import 'dart:io';
 
 import '../../../core/host/http_host_service.dart';
 import '../../../core/storage/backup_receive_service.dart';
-import '../../../core/storage/external_volume_browser.dart';
 import '../../../core/storage/inbox_catalog_service.dart';
 import '../../../core/storage/local_system_stats.dart';
 import '../../../core/storage/media_library_service.dart';
@@ -31,28 +30,14 @@ void mountNasHostRoutes({
   required BackupReceiveService backupReceive,
   required NasShareScope shareScope,
 }) {
-  final externalBrowser = ExternalVolumeBrowser();
   final hls = VideoHlsSessionService(
-    resolver: ({required String rootId, required String relativePath}) async {
+    resolver: ({required String rootId, required String relativePath}) {
       if (shareScope.isCustom) {
         final file = shareScope.resolveFile(relativePath);
-        if (file == null || !shareScope.allows(file.path)) return null;
-        return file;
-      }
-      if (rootId == MediaLibraryService.rootId) {
-        final asset = await mediaLibrary.findByRelativePath(relativePath);
-        final abs = asset?.absolutePath?.trim();
-        if (abs == null || abs.isEmpty) return null;
-        final file = File(abs);
-        return await file.exists() ? file : null;
-      }
-      if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
-        final vol = externalBrowser.volumePathFromRootId(rootId);
-        if (vol == null) return null;
-        return externalBrowser.resolveFile(
-          volumePath: vol,
-          relativePath: relativePath,
-        );
+        if (file == null || !shareScope.allows(file.path)) {
+          return Future<File?>.value(null);
+        }
+        return Future<File?>.value(file);
       }
       return sharePathResolver.resolveFile(
         rootId: rootId,
@@ -123,6 +108,15 @@ void mountNasHostRoutes({
     BatchDeleteHandler(
       shareReader: shareReader,
       mediaLibrary: mediaLibrary,
+      resolver: sharePathResolver,
+      shareScope: shareScope,
+    ).handler,
+  );
+  router.post(
+    MkdirHandler.path,
+    MkdirHandler(
+      shareReader: shareReader,
+      resolver: sharePathResolver,
       shareScope: shareScope,
     ).handler,
   );

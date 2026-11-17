@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../../../core/common/key_value_store.dart';
-import '../../../core/storage/app_paths.dart';
 
 /// 本机作为 NAS 时，对端能读到的范围。
 ///
@@ -124,7 +123,7 @@ class NasShareScope {
 
   /// 列出槽位目录的直接子项。空路径返回每个仍存在的已选文件夹。
   Future<List<NasScopeNode>> list(String relativePath) async {
-    final rel = AppPaths.portable(relativePath);
+    final rel = relativePath.replaceAll('\\', '/').trim();
     if (rel.isEmpty) {
       final dirs = folders;
       final out = <NasScopeNode>[];
@@ -163,7 +162,7 @@ class NasShareScope {
       out.add(
         NasScopeNode(
           name: name,
-          relativePath: AppPaths.portable(childRel),
+          relativePath: childRel.replaceAll('\\', '/'),
           isDirectory: isDir,
           sizeBytes: isDir ? 0 : stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
@@ -195,6 +194,53 @@ class NasShareScope {
     return false;
   }
 
+  /// 在自定义共享槽位下创建子目录。
+  Future<({bool ok, String? relativePath, String? error})> createDirectory({
+    required String parentRelativePath,
+    required String name,
+  }) async {
+    if (!isCustom) {
+      return (ok: false, relativePath: null, error: 'not custom scope');
+    }
+    final folderName = name.trim();
+    if (folderName.isEmpty ||
+        folderName == '.' ||
+        folderName == '..' ||
+        folderName.contains('/') ||
+        folderName.contains('\\') ||
+        folderName.contains('\x00')) {
+      return (ok: false, relativePath: null, error: 'invalid name');
+    }
+    final parent = parentRelativePath.replaceAll('\\', '/').trim();
+    // 空 path 时应用方应传具体槽位相对路径（如 s0）；此处拒绝空槽。
+    if (parent.isEmpty) {
+      return (ok: false, relativePath: null, error: 'parent required');
+    }
+    final parsed = _parseSlot(parent);
+    if (parsed == null) {
+      return (ok: false, relativePath: null, error: 'invalid path');
+    }
+    final absParent = absoluteFor(parent);
+    if (absParent == null || !allows(absParent)) {
+      return (ok: false, relativePath: null, error: 'denied');
+    }
+    final parentDir = Directory(absParent);
+    if (!await parentDir.exists()) {
+      return (ok: false, relativePath: null, error: 'parent missing');
+    }
+    final joined = p.normalize(p.join(absParent, folderName));
+    if (!allows(joined)) {
+      return (ok: false, relativePath: null, error: 'denied');
+    }
+    final rel = '$parent/$folderName'.replaceAll('\\', '/');
+    final existing = await FileSystemEntity.type(joined, followLinks: false);
+    if (existing != FileSystemEntityType.notFound) {
+      return (ok: false, relativePath: rel, error: 'exists');
+    }
+    await Directory(joined).create(recursive: false);
+    return (ok: true, relativePath: rel, error: null);
+  }
+
   Future<void> _save(List<String> paths) async {
     await _store.setString(modeKey, _custom);
     await _store.setString(foldersKey, jsonEncode(paths));
@@ -202,7 +248,7 @@ class NasShareScope {
   }
 
   ({int index, String rest})? _parseSlot(String relativePath) {
-    final rel = AppPaths.portable(relativePath);
+    final rel = relativePath.replaceAll('\\', '/').trim();
     final match = RegExp(r'^s(\d+)(?:/(.*))?$').firstMatch(rel);
     if (match == null) return null;
     final rest = match.group(2) ?? '';

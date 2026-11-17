@@ -11,7 +11,6 @@ import '../../../../../core/common/app_exception.dart';
 import '../../../../../core/identity/peer.dart';
 import '../../../../../core/protocol/nas_api_paths.dart';
 import '../../../../../core/protocol/thumb_image_tier.dart';
-import '../../../../../core/storage/app_paths.dart';
 import '../../../../../core/storage/external_volume_browser.dart';
 import '../../../../../core/storage/incomplete_file.dart';
 import '../../../../../core/storage/media_library_service.dart';
@@ -65,21 +64,9 @@ class ThumbnailHandler {
             final asset = await mediaLibrary.findByRelativePath(name);
             if (asset == null) return null;
             if (!libraryAssetAllowed(shareScope, asset)) return null;
-            final fromLib = await mediaLibrary
+            return mediaLibrary
                 .thumbnailFor(asset, maxPx: maxPx)
                 .timeout(generateTimeout, onTimeout: () => null);
-            if (fromLib != null && fromLib.isNotEmpty) return fromLib;
-            // Windows 指定根扫描：走文件缩略图（Shell/ffmpeg/Dart）。
-            final abs = asset.absolutePath?.trim();
-            if (abs != null && abs.isNotEmpty) {
-              final file = File(abs);
-              if (await file.exists()) {
-                return thumbnails
-                    .thumbnailFor(file, maxPx: maxPx)
-                    .timeout(generateTimeout, onTimeout: () => null);
-              }
-            }
-            return null;
           }
           final file = await resolveScopedFile(
             scope: shareScope,
@@ -158,11 +145,13 @@ class BatchDeleteHandler {
   BatchDeleteHandler({
     required this.shareReader,
     required this.mediaLibrary,
+    required this.resolver,
     this.shareScope,
   });
 
   final ShareReader shareReader;
   final MediaLibraryService mediaLibrary;
+  final SharePathResolver resolver;
   final NasShareScope? shareScope;
 
   Handler get handler => (Request request) async {
@@ -181,9 +170,10 @@ class BatchDeleteHandler {
         for (final rawItem in items) {
           final m = Map<String, dynamic>.from(rawItem as Map);
           var rootId = m['rootId'] as String? ?? '';
-          final rel = AppPaths.portable(
-            (m['relativePath'] as String?) ?? (m['name'] as String?) ?? '',
-          );
+          final rel = ((m['relativePath'] as String?) ??
+                  (m['name'] as String?) ??
+                  '')
+              .replaceAll('\\', '/');
           if (rootId.isEmpty || rel.isEmpty) {
             errors.add('$rootId/$rel: bad args');
             continue;
@@ -223,9 +213,7 @@ class BatchDeleteHandler {
                 );
               }
             } else {
-              if (rootId == 'fs') {
-                // shareReader 需要真实 root id；fs 别名在此不解析，交给调用方。
-              }
+              rootId = await resolver.resolveRootId(rootId);
               ok = await shareReader.deleteEntry(
                 rootId: rootId,
                 relativePath: rel,
@@ -245,6 +233,138 @@ class BatchDeleteHandler {
           headers: {'content-type': 'application/json; charset=utf-8'},
         );
       };
+}
+
+/// POST /api/v1/files/mkdir —— 目录树新建文件夹。
+class MkdirHandler {
+  static const path = NasApiPaths.filesMkdir;
+
+  MkdirHandler({
+    required this.shareReader,
+    required this.resolver,
+    this.shareScope,
+  });
+
+  final ShareReader shareReader;
+  final SharePathResolver resolver;
+  final NasShareScope? shareScope;
+
+  Handler get handler => (Request request) async {
+        final peer = request.context[peerKey] as Peer?;
+        if (peer == null) return Response.unauthorized('peer required');
+        Map<String, dynamic> body;
+        try {
+          body =
+              jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+        } catch (_) {
+          return Response.badRequest(body: 'invalid json');
+        }
+        var rootId = (body['rootId'] as String? ?? '').trim();
+        final path = ((body['path'] as String?) ?? '')
+            .replaceAll('\\', '/')
+            .trim();
+        final name = ((body['name'] as String?) ?? '').trim();
+        if (rootId.isEmpty || name.isEmpty) {
+          return Response.badRequest(body: 'rootId and name required');
+        }
+        if (SharePathResolver.isUnsafeName(name) ||
+            name.contains('/') ||
+            name == '.' ||
+            name == '..') {
+          return Response.badRequest(body: 'invalid name');
+        }
+        if (path.isNotEmpty && SharePathResolver.isUnsafeName(path)) {
+          return Response.forbidden('invalid path');
+        }
+
+        try {
+          if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
+            final browser = ExternalVolumeBrowser();
+            final vol = browser.volumePathFromRootId(rootId);
+            if (vol == null || vol.isEmpty) {
+              return Response.badRequest(body: 'invalid external root');
+            }
+            if (shareScope?.isCustom == true) {
+              final parentPath = path.isEmpty
+                  ? vol
+                  : p.join(vol, path.replaceAll('/', p.separator));
+              if (!shareScope!.allows(parentPath)) {
+                return Response.forbidden('denied');
+              }
+            }
+            final result = await browser.createDirectory(
+              volumePath: vol,
+              parentRelativePath: path,
+              name: name,
+            );
+            return _mkdirResult(result, rootId: rootId);
+          }
+
+          if (shareScope?.isCustom == true) {
+            final result = await shareScope!.createDirectory(
+              parentRelativePath: path,
+              name: name,
+            );
+            return _mkdirResult(result, rootId: rootId);
+          }
+
+          rootId = await resolver.resolveRootId(rootId);
+          final result = await shareReader.createDirectory(
+            rootId: rootId,
+            parentRelativePath: path,
+            name: name,
+          );
+          return _mkdirResult(result, rootId: rootId);
+        } catch (e) {
+          return Response.internalServerError(
+            body: '$e',
+            headers: {'content-type': 'text/plain; charset=utf-8'},
+          );
+        }
+      };
+
+  Response _mkdirResult(
+    ({bool ok, String? relativePath, String? error}) result, {
+    required String rootId,
+  }) {
+    if (result.ok) {
+      return Response.ok(
+        jsonEncode({
+          'ok': true,
+          'rootId': rootId,
+          'relativePath': result.relativePath,
+        }),
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    }
+    switch (result.error) {
+      case 'exists':
+        return Response(
+          409,
+          body: jsonEncode({
+            'ok': false,
+            'error': 'exists',
+            'relativePath': result.relativePath,
+          }),
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      case 'parent missing':
+        return Response.notFound('parent missing');
+      case 'denied':
+      case 'out of scope':
+        return Response.forbidden(result.error);
+      case 'invalid name':
+      case 'invalid path':
+      case 'parent required':
+        return Response.badRequest(body: result.error);
+      default:
+        return Response(
+          400,
+          body: result.error ?? 'mkdir failed',
+          headers: {'content-type': 'text/plain; charset=utf-8'},
+        );
+    }
+  }
 }
 
 /// PUT /api/v1/files/upload?name= —— 流式写入共享根四分类（按文件名归类）。
@@ -382,18 +502,11 @@ Future<File?> resolveScopedFile({
   required SharePathResolver resolver,
   required String rootId,
   required String name,
-  ExternalVolumeBrowser? externalBrowser,
 }) async {
   if (scope?.isCustom == true) {
     final file = scope!.resolveFile(name);
     if (file == null || !scope.allows(file.path)) return null;
     return file;
-  }
-  if (rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
-    final browser = externalBrowser ?? ExternalVolumeBrowser();
-    final vol = browser.volumePathFromRootId(rootId);
-    if (vol == null) return null;
-    return browser.resolveFile(volumePath: vol, relativePath: name);
   }
   var id = rootId;
   if (id == 'fs') {

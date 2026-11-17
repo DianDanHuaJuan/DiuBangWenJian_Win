@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:shelf/shelf.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
@@ -7,6 +8,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../auth/peer_fingerprint_middleware.dart';
 import '../common/app_logger.dart';
 import '../identity/peer.dart';
+import '../protocol/nas_api_paths.dart';
 import 'realtime_connection_registry.dart';
 import 'realtime_event.dart';
 
@@ -17,6 +19,9 @@ typedef RealtimeInboundHandler = Future<void> Function(
 
 typedef RealtimePeerLifecycle = void Function(String peerFingerprint);
 
+/// NAS 开启时入站 WS 占槽；返回 false 表示满员应拒绝升级。
+typedef RealtimePeerSlotAcquire = bool Function(String peerFingerprint);
+
 /// 被连接侧 realtime hub（挂 `/ws`，随宿主常驻）。
 class RealtimeHub {
   RealtimeHub({
@@ -24,6 +29,8 @@ class RealtimeHub {
     this.onEvent,
     this.onPeerConnected,
     this.onPeerDisconnected,
+    this.tryAcquirePeerSlot,
+    this.peerSlotLimit,
   });
 
   static const path = '/ws';
@@ -32,12 +39,27 @@ class RealtimeHub {
   final RealtimeInboundHandler? onEvent;
   final RealtimePeerLifecycle? onPeerConnected;
   final RealtimePeerLifecycle? onPeerDisconnected;
+  final RealtimePeerSlotAcquire? tryAcquirePeerSlot;
+  final int Function()? peerSlotLimit;
 
   Handler get handler {
     return (Request request) async {
       final peer = request.context[peerKey] as Peer?;
       if (peer == null) {
         return Response.unauthorized('peer required');
+      }
+      final acquire = tryAcquirePeerSlot;
+      if (acquire != null && !acquire(peer.fingerprint)) {
+        return Response(
+          503,
+          body: jsonEncode({
+            'ok': false,
+            'code': NasApiErrorCodes.peerLimit,
+            'message': '同时连接已满',
+            'limit': peerSlotLimit?.call() ?? 0,
+          }),
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
       }
       final wsHandler = webSocketHandler((WebSocketChannel channel, _) {
         _attach(peer.fingerprint, channel);

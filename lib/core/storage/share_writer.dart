@@ -202,14 +202,19 @@ class ShareWriter {
   }) async {
     final base = p.basename(preferred).trim();
     final safe = base.isEmpty ? 'file' : base;
-    final candidate = File(p.join(dir.path, safe));
-    if (!await candidate.exists()) return safe;
+    Future<bool> taken(String name) async {
+      final path = p.join(dir.path, name);
+      final type = await FileSystemEntity.type(path, followLinks: false);
+      return type != FileSystemEntityType.notFound;
+    }
+
+    if (!await taken(safe)) return safe;
 
     final stem = p.basenameWithoutExtension(safe);
     final ext = p.extension(safe);
     for (var i = 1; i < 10000; i++) {
       final name = numericSuffix ? '$stem$i$ext' : '$stem ($i)$ext';
-      if (!await File(p.join(dir.path, name)).exists()) return name;
+      if (!await taken(name)) return name;
     }
     final stamp = DateTime.now().millisecondsSinceEpoch;
     return numericSuffix ? '$stem$stamp$ext' : '$stem ($stamp)$ext';

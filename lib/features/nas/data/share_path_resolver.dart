@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import '../../../core/storage/app_paths.dart';
+import 'package:path/path.dart' as p;
+
 import '../../../core/storage/storage_root.dart';
 import '../../../core/storage/storage_root_store.dart';
 
@@ -11,11 +12,10 @@ class SharePathResolver {
   final StorageRootStore _roots;
 
   static bool isUnsafeName(String name) {
-    final rel = AppPaths.portable(name);
-    if (rel.isEmpty) return true;
-    if (rel.contains('..')) return true;
-    if (rel.startsWith('/')) return true;
-    if (AppPaths.isWindowsDriveRoot(rel) || rel.startsWith('//')) return true;
+    if (name.isEmpty) return true;
+    if (name.contains('..')) return true;
+    if (name.contains('\\')) return true;
+    if (name.startsWith('/')) return true;
     return false;
   }
 
@@ -30,6 +30,17 @@ class SharePathResolver {
 
   Future<StorageRoot> currentRoot() => _roots.ensureCurrent();
 
+  /// 将 `fs` 别名解析为当前共享根真实 id；其它 id 原样返回。
+  ///
+  /// list / mkdir / batch-delete / upload 写路径共用，避免「list 认 fs、delete 不认」。
+  Future<String> resolveRootId(String rootId) async {
+    final id = rootId.trim();
+    if (id == 'fs' || id.isEmpty) {
+      return (await currentRoot()).id;
+    }
+    return id;
+  }
+
   Future<File?> resolveFile({
     required String rootId,
     required String relativePath,
@@ -39,13 +50,12 @@ class SharePathResolver {
       return null;
     }
     if (isUnsafeName(relativePath)) return null;
-    final rootPortable = AppPaths.portable(root.uriOrPath);
-    final joinedPortable =
-        AppPaths.joinPortable(rootPortable, AppPaths.portable(relativePath));
-    if (!AppPaths.isWithinPortable(rootPortable, joinedPortable)) {
+    final joined = p.normalize(p.join(root.uriOrPath, relativePath));
+    final canonicalRoot = p.normalize(root.uriOrPath);
+    if (!p.isWithin(canonicalRoot, joined) && joined != canonicalRoot) {
       return null;
     }
-    return File(AppPaths.native(joinedPortable));
+    return File(joined);
   }
 
   Future<Directory?> resolveDir({
@@ -57,13 +67,13 @@ class SharePathResolver {
       return null;
     }
     if (relativePath.isNotEmpty && isUnsafeName(relativePath)) return null;
-    final rootPortable = AppPaths.portable(root.uriOrPath);
-    final joinedPortable = relativePath.isEmpty
-        ? rootPortable
-        : AppPaths.joinPortable(rootPortable, AppPaths.portable(relativePath));
-    if (!AppPaths.isWithinPortable(rootPortable, joinedPortable)) {
+    final joined = relativePath.isEmpty
+        ? p.normalize(root.uriOrPath)
+        : p.normalize(p.join(root.uriOrPath, relativePath));
+    final canonicalRoot = p.normalize(root.uriOrPath);
+    if (!p.isWithin(canonicalRoot, joined) && joined != canonicalRoot) {
       return null;
     }
-    return Directory(AppPaths.native(joinedPortable));
+    return Directory(joined);
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../common/app_logger.dart';
+import '../common/nas_peer_limit_exception.dart';
 import '../network/peer_api_client.dart';
 import '../protocol/nas_api_paths.dart';
 import '../storage/media_library_service.dart';
@@ -106,6 +107,8 @@ class RemotePeerFileProvider implements FileProvider {
               : peerFingerprint,
           'rootId': rootId,
           'path': path,
+          'offset': offset,
+          'limit': limit,
         },
       );
     }
@@ -132,6 +135,7 @@ class RemotePeerFileProvider implements FileProvider {
       throw Exception('对端不可达（拨号失败或超时）');
     }
     if (response.statusCode == 503) {
+      _throwIfPeerLimit(response.statusCode, response.data);
       throw Exception('对端未开启 NAS');
     }
     if (response.statusCode == 401) {
@@ -219,9 +223,54 @@ class RemotePeerFileProvider implements FileProvider {
         ],
       },
     );
-    if (response == null || response.statusCode != 200) return false;
+    if (response == null) return false;
+    _throwIfPeerLimit(response.statusCode, response.data);
+    if (response.statusCode != 200) return false;
     final map = _asMap(response.data);
     return ((map['deleted'] as num?)?.toInt() ?? 0) > 0;
+  }
+
+  @override
+  Future<String?> mkdir({
+    required String rootId,
+    required String path,
+    required String name,
+  }) async {
+    final response = await _api.post(
+      peerFingerprint,
+      NasApiPaths.filesMkdir,
+      body: {
+        'rootId': rootId,
+        'path': path,
+        'name': name,
+      },
+    );
+    if (response == null) {
+      throw Exception('对端不可达（拨号失败或超时）');
+    }
+    _throwIfPeerLimit(response.statusCode, response.data);
+    if (response.statusCode == 409) {
+      throw StateError('exists');
+    }
+    if (response.statusCode != 200) {
+      throw Exception('新建文件夹失败 HTTP ${response.statusCode}');
+    }
+    final map = _asMap(response.data);
+    return map['relativePath'] as String? ??
+        (path.isEmpty ? name : '$path/$name');
+  }
+
+  void _throwIfPeerLimit(int statusCode, Object? data) {
+    if (statusCode != 503) return;
+    try {
+      final map = _asMap(data);
+      if (map['code'] == NasApiErrorCodes.peerLimit) {
+        final limit = (map['limit'] as num?)?.toInt();
+        throw NasPeerLimitException(limit: limit);
+      }
+    } catch (e) {
+      if (e is NasPeerLimitException) rethrow;
+    }
   }
 
   Map<String, dynamic> _asMap(Object? data) {

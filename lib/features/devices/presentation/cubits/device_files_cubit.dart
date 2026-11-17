@@ -1065,14 +1065,23 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   }
 
   void selectEntry(FileEntry entry) {
-    if (entry.isDirectory) return;
+    // 目录树允许多选文件夹；媒体墙仍只选文件。
+    if (entry.isDirectory && !state.isDirectoryTree) return;
+    if (entry.isDirectory &&
+        state.treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      return;
+    }
     final key = '${entry.rootId}|${entry.relativePath}';
     if (state.selected.contains(key)) return;
     emit(state.copyWith(selected: {...state.selected, key}));
   }
 
   void toggleSelect(FileEntry entry) {
-    if (entry.isDirectory) return;
+    if (entry.isDirectory && !state.isDirectoryTree) return;
+    if (entry.isDirectory &&
+        state.treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      return;
+    }
     final key = '${entry.rootId}|${entry.relativePath}';
     final next = Set<String>.from(state.selected);
     if (next.contains(key)) {
@@ -1301,13 +1310,79 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   }
 
   Future<bool> deleteEntry(FileEntry entry) async {
-    if (entry.isDirectory) return false;
+    // 目录树可删文件夹；媒体墙仍拒目录。
+    if (entry.isDirectory && !state.isDirectoryTree) return false;
+    if (entry.isDirectory &&
+        state.treeAnchor == DirectoryTreeAnchor.volumePicker) {
+      return false;
+    }
     emit(state.copyWith(busy: true, clearError: true));
     try {
       final ok = await _deleteKey(entry.rootId, entry.relativePath);
       emit(state.copyWith(busy: false));
       if (ok) await refresh();
       return ok;
+    } catch (e) {
+      emit(state.copyWith(busy: false, error: '$e'));
+      return false;
+    }
+  }
+
+  /// 目录树当前 cwd 下新建文件夹。
+  Future<bool> createFolder(String name) async {
+    if (!state.isDirectoryTree) return false;
+    if (state.treeAnchor == DirectoryTreeAnchor.volumePicker) return false;
+    final folderName = name.trim();
+    if (folderName.isEmpty) return false;
+    emit(state.copyWith(busy: true, clearError: true));
+    try {
+      final rootId = state.rootId.isNotEmpty
+          ? state.rootId
+          : (state.isOnVolume && state.externalVolumePath != null
+              ? _externalBrowser.rootIdFor(state.externalVolumePath!)
+              : 'fs');
+      if (isSelf &&
+          state.isOnVolume &&
+          rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix)) {
+        final vol = _externalBrowser.volumePathFromRootId(rootId) ??
+            state.externalVolumePath;
+        if (vol == null) {
+          emit(state.copyWith(busy: false, error: '卷不可用'));
+          return false;
+        }
+        final result = await _externalBrowser.createDirectory(
+          volumePath: vol,
+          parentRelativePath: state.path,
+          name: folderName,
+        );
+        emit(state.copyWith(busy: false));
+        if (!result.ok) {
+          emit(state.copyWith(
+            error: result.error == 'exists' ? '同名已存在' : (result.error ?? '创建失败'),
+          ));
+          return false;
+        }
+        await refresh();
+        return true;
+      }
+      final created = await _provider.mkdir(
+        rootId: rootId,
+        path: state.path,
+        name: folderName,
+      );
+      emit(state.copyWith(busy: false));
+      if (created == null) {
+        emit(state.copyWith(error: '创建失败'));
+        return false;
+      }
+      await refresh();
+      return true;
+    } on StateError catch (e) {
+      emit(state.copyWith(
+        busy: false,
+        error: e.message == 'exists' ? '同名已存在' : '$e',
+      ));
+      return false;
     } catch (e) {
       emit(state.copyWith(busy: false, error: '$e'));
       return false;

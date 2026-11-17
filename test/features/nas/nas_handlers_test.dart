@@ -96,6 +96,7 @@ void main() {
     final handler = BatchDeleteHandler(
       shareReader: reader,
       mediaLibrary: MediaLibraryService(),
+      resolver: resolver,
     ).handler;
     final response = await handler(
       Request(

@@ -6,6 +6,7 @@ abstract final class NasApiPaths {
   static const filesContent = '/api/v1/files/content';
   static const filesUpload = '/api/v1/files/upload';
   static const filesBatchDelete = '/api/v1/files/batch-delete';
+  static const filesMkdir = '/api/v1/files/mkdir';
   static const storageVolumes = '/api/v1/storage/volumes';
 
   static const thumbnail = '/api/v1/thumbnail';
@@ -14,6 +15,12 @@ abstract final class NasApiPaths {
   static const backupExists = '/api/v1/backup/exists';
   static const backupUpload = '/api/v1/backup/upload';
   static const previewHls = '/api/v1/preview/hls';
+}
+
+/// NAS 业务错误码（JSON `code` 字段；客户端按码识别，勿依赖文案）。
+abstract final class NasApiErrorCodes {
+  /// 同时在线设备槽已满。
+  static const peerLimit = 'NAS_PEER_LIMIT';
 }
 
 /// 查询参数键（与 handlers 约定一致，避免散落魔法字符串）。

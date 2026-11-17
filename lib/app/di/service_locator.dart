@@ -19,6 +19,8 @@ import '../../core/storage/local_system_stats.dart';
 import '../../core/discovery/peer_registry.dart';
 import '../../core/discovery/platform_multicast_lock.dart';
 import '../../core/host/http_host_service.dart';
+import '../../core/host/nas_peer_slot_middleware.dart';
+import '../../core/host/nas_peer_slot_registry.dart';
 import '../../core/host/nas_route_guard.dart';
 import '../../core/identity/device_identity_service.dart';
 import '../../core/identity/identity_key_store.dart';
@@ -131,6 +133,7 @@ class ServiceLocator {
   CategoryDownloadStore? _categoryDownloadStore;
   InboxCatalogService? _inboxCatalog;
   bool _nasStackMounted = false;
+  NasPeerSlotRegistry? _nasPeerSlots;
   Future<TransferTaskStore>? _transferTaskStoreFuture;
   Future<ChatRepository>? _chatRepositoryFuture;
   RealtimeConnectionRegistry? _realtimeRegistry;
@@ -264,6 +267,7 @@ class ServiceLocator {
             },
           ),
           nasRouteGuard(isEnabled: () => isNasServiceEnabled),
+          nasPeerSlotMiddleware(slots: nasPeerSlotRegistry()),
         ],
       );
       _hostService = host;
@@ -591,6 +595,12 @@ class ServiceLocator {
       },
       onPeerConnected: (fp) => peerStatusService().onPeerConnected(fp),
       onPeerDisconnected: (fp) => peerStatusService().onPeerDisconnected(fp),
+      // NAS 开启时入站 WS 与 HTTP 共用在线槽；关闭时不占槽（聊天仍可用）。
+      tryAcquirePeerSlot: (fp) {
+        if (!isNasServiceEnabled) return true;
+        return nasPeerSlotRegistry().tryAcquire(fp);
+      },
+      peerSlotLimit: () => nasPeerSlotRegistry().limit,
     );
   }
 
@@ -790,11 +800,16 @@ class ServiceLocator {
             },
           ),
           nasRouteGuard(isEnabled: () => isNasServiceEnabled),
+          nasPeerSlotMiddleware(slots: nasPeerSlotRegistry()),
         ],
       );
       _hostService = host;
       return host;
     }();
+  }
+
+  NasPeerSlotRegistry nasPeerSlotRegistry() {
+    return _nasPeerSlots ??= NasPeerSlotRegistry();
   }
 
   /// NAS 路由集静态挂载（开关关时由 [nasRouteGuard] 返回 503，不卸载）。
@@ -1034,6 +1049,9 @@ class ServiceLocator {
 
   Future<void> setNasServiceEnabled(bool enabled) async {
     await nasServiceSwitch().setEnabled(enabled);
+    if (!enabled) {
+      nasPeerSlotRegistry().clearAll();
+    }
   }
 
   NasControlCubit nasControlCubit() {

@@ -162,9 +162,13 @@ class ExternalVolumeBrowser {
     final root = normalizePath(volumePath);
     if (root.isEmpty) return false;
     final relPortable = AppPaths.portable(relativePath);
-    final abs = relPortable.isEmpty
-        ? AppPaths.native(root)
-        : AppPaths.native(AppPaths.joinPortable(root, relPortable));
+    // 禁止删卷根本身。
+    if (relPortable.isEmpty ||
+        relPortable == '.' ||
+        relPortable.contains('..')) {
+      return false;
+    }
+    final abs = AppPaths.native(AppPaths.joinPortable(root, relPortable));
     final file = File(abs);
     final dir = Directory(abs);
     try {
@@ -178,6 +182,54 @@ class ExternalVolumeBrowser {
       }
     } catch (_) {}
     return false;
+  }
+
+  /// 在卷内创建子目录。父目录须存在；同名已存在返回 `exists`。
+  Future<({bool ok, String? relativePath, String? error})> createDirectory({
+    required String volumePath,
+    required String parentRelativePath,
+    required String name,
+  }) async {
+    final root = normalizePath(volumePath);
+    if (root.isEmpty || !await isVolumeMounted(root)) {
+      return (ok: false, relativePath: null, error: 'volume unavailable');
+    }
+    final parent = AppPaths.portable(parentRelativePath);
+    if (parent.contains('..')) {
+      return (ok: false, relativePath: null, error: 'invalid path');
+    }
+    final folderName = p.basename(AppPaths.portable(name)).trim();
+    if (folderName.isEmpty ||
+        folderName == '.' ||
+        folderName == '..') {
+      return (ok: false, relativePath: null, error: 'invalid name');
+    }
+    final parentPortable =
+        parent.isEmpty ? root : AppPaths.joinPortable(root, parent);
+    if (!AppPaths.isWithinPortable(root, parentPortable) &&
+        parentPortable != root) {
+      return (ok: false, relativePath: null, error: 'out of scope');
+    }
+    final parentDir = Directory(AppPaths.native(parentPortable));
+    if (!await parentDir.exists()) {
+      return (ok: false, relativePath: null, error: 'parent missing');
+    }
+    final joinedPortable = AppPaths.joinPortable(parentPortable, folderName);
+    if (!AppPaths.isWithinPortable(root, joinedPortable)) {
+      return (ok: false, relativePath: null, error: 'out of scope');
+    }
+    final rel = parent.isEmpty ? folderName : AppPaths.joinPortable(parent, folderName);
+    final joined = AppPaths.native(joinedPortable);
+    final existing = await FileSystemEntity.type(joined, followLinks: false);
+    if (existing != FileSystemEntityType.notFound) {
+      return (ok: false, relativePath: rel, error: 'exists');
+    }
+    try {
+      await Directory(joined).create(recursive: false);
+      return (ok: true, relativePath: rel, error: null);
+    } catch (_) {
+      return (ok: false, relativePath: null, error: 'create failed');
+    }
   }
 
   /// 把文件写入卷内某个目录。重名时在主文件名后加序号。不扫进系统相册。

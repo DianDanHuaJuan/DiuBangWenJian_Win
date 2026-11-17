@@ -62,5 +62,29 @@ class LocalFileProvider implements FileProvider {
   }) =>
       _reader.deleteEntry(rootId: rootId, relativePath: relativePath);
 
+  @override
+  Future<String?> mkdir({
+    required String rootId,
+    required String path,
+    required String name,
+  }) async {
+    var id = rootId.trim();
+    if (id == 'fs' || id.isEmpty) {
+      id = (await _roots.ensureCurrent()).id;
+    }
+    final result = await _reader.createDirectory(
+      rootId: id,
+      parentRelativePath: path,
+      name: name,
+    );
+    if (!result.ok) {
+      if (result.error == 'exists') {
+        throw StateError('exists');
+      }
+      return null;
+    }
+    return result.relativePath;
+  }
+
   Future<StorageRoot> ensureCurrent() => _roots.ensureCurrent();
 }

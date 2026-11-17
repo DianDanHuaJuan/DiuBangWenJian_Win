@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-import 'app_paths.dart';
 import 'storage_root.dart';
 import 'storage_root_store.dart';
 
@@ -73,7 +72,7 @@ class ShareReader {
           rootId: root.id,
           rootDisplayName: root.displayName,
           fileName: name,
-          relativePath: AppPaths.portable(rel),
+          relativePath: rel.replaceAll('\\', '/'),
           absolutePath: entity.path,
           sizeBytes: isDir ? 0 : stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
@@ -134,6 +133,55 @@ class ShareReader {
     return false;
   }
 
+  /// 在共享根下创建子目录。父目录须已存在；同名已存在返回 `exists`。
+  Future<({bool ok, String? relativePath, String? error})> createDirectory({
+    required String rootId,
+    required String parentRelativePath,
+    required String name,
+  }) async {
+    final root = await _findRoot(rootId);
+    if (root == null || root.revoked || root.kind != StorageRootKind.path) {
+      return (ok: false, relativePath: null, error: 'root unavailable');
+    }
+    final parent = parentRelativePath.replaceAll('\\', '/').trim();
+    if (parent.isNotEmpty && !_isSafeRelative(parent)) {
+      return (ok: false, relativePath: null, error: 'invalid path');
+    }
+    final folderName = name.trim();
+    if (folderName.isEmpty ||
+        folderName == '.' ||
+        folderName == '..' ||
+        folderName.contains('/') ||
+        folderName.contains('\\') ||
+        folderName.contains('\x00') ||
+        !_isSafeRelative(folderName)) {
+      return (ok: false, relativePath: null, error: 'invalid name');
+    }
+
+    final parentAbs = parent.isEmpty
+        ? p.normalize(root.uriOrPath)
+        : p.normalize(p.join(root.uriOrPath, parent));
+    final canonicalRoot = p.normalize(root.uriOrPath);
+    if (!p.isWithin(canonicalRoot, parentAbs) && parentAbs != canonicalRoot) {
+      return (ok: false, relativePath: null, error: 'out of scope');
+    }
+    final parentDir = Directory(parentAbs);
+    if (!await parentDir.exists()) {
+      return (ok: false, relativePath: null, error: 'parent missing');
+    }
+    final joined = p.normalize(p.join(parentAbs, folderName));
+    if (!p.isWithin(canonicalRoot, joined)) {
+      return (ok: false, relativePath: null, error: 'out of scope');
+    }
+    final rel = parent.isEmpty ? folderName : '$parent/$folderName';
+    final existing = await FileSystemEntity.type(joined, followLinks: false);
+    if (existing != FileSystemEntityType.notFound) {
+      return (ok: false, relativePath: rel.replaceAll('\\', '/'), error: 'exists');
+    }
+    await Directory(joined).create(recursive: false);
+    return (ok: true, relativePath: rel.replaceAll('\\', '/'), error: null);
+  }
+
   Future<StorageRoot?> _findRoot(String rootId) async {
     final current = await _roots.ensureCurrent();
     if (current.id == rootId) return current;
@@ -144,10 +192,9 @@ class ShareReader {
   }
 
   static bool _isSafeRelative(String relativePath) {
-    final rel = AppPaths.portable(relativePath);
-    if (rel.isEmpty) return false;
-    if (rel.contains('..')) return false;
-    if (rel.startsWith('/')) return false;
+    if (relativePath.contains('..')) return false;
+    if (relativePath.contains('\\')) return false;
+    if (relativePath.startsWith('/')) return false;
     return true;
   }
 }

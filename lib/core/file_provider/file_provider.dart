@@ -19,4 +19,11 @@ abstract class FileProvider {
     required String rootId,
     required String relativePath,
   });
+
+  /// 在 [path] 下创建名为 [name] 的子目录；成功返回相对路径，失败返回 null。
+  Future<String?> mkdir({
+    required String rootId,
+    required String path,
+    required String name,
+  });
 }

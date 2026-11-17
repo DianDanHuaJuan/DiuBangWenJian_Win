@@ -66,15 +66,15 @@ class _DeviceFilesView extends StatelessWidget {
 
   /// 需要拦截系统返回时为 true。本机路由根交给 Navigator pop，避免
   /// `canPop: false` + `pop/maybePop` 死循环。
-  /// 分类网格多选时，返回只退出多选。
+  /// 多选时，返回只退出多选。
   bool _exitGridSelection(DeviceFilesCubit cubit, DeviceFilesState state) {
-    if (!state.selectionMode || state.isDirectoryTree) return false;
+    if (!state.selectionMode) return false;
     cubit.exitSelection();
     return true;
   }
 
   bool _interceptSystemBack(DeviceFilesCubit cubit, DeviceFilesState state) {
-    if (state.selectionMode && !state.isDirectoryTree) return true;
+    if (state.selectionMode) return true;
     if (state.canGoUpInTree) return true;
     // 对端根：须 leave + go，不能裸 pop。
     return !cubit.isSelf;
@@ -157,6 +157,16 @@ class _DeviceFilesView extends StatelessWidget {
                   onPressed: () => _handleBack(context, state),
                 ),
                 title: Text(cubit.appBarTitle),
+                actions: [
+                  if (state.isDirectoryTree &&
+                      state.treeAnchor != DirectoryTreeAnchor.volumePicker &&
+                      !state.selectionMode)
+                    IconButton(
+                      tooltip: '新建文件夹',
+                      icon: const Icon(Icons.create_new_folder_outlined),
+                      onPressed: () => unawaited(_createFolder(context)),
+                    ),
+                ],
               ),
               body: Stack(
                 children: [
@@ -239,10 +249,8 @@ class _DeviceFilesView extends StatelessWidget {
                       onUploadMediaTap: () => _upload(context, media: true),
                       onUploadFilesTap: () => _upload(context, media: false),
                     ),
-                  if (!cubit.isSelf &&
-                      state.selectionMode &&
-                      state.isDirectoryTree)
-                    const _PeerSelectionBar(),
+                  if (state.selectionMode && state.isDirectoryTree)
+                    const _DirectoryTreeSelectionBar(),
                 ],
               ),
             ),
@@ -250,6 +258,27 @@ class _DeviceFilesView extends StatelessWidget {
         },
       ),
     );
+  }
+
+  Future<void> _createFolder(BuildContext context) async {
+    final cubit = context.read<DeviceFilesCubit>();
+    final name = await AppDialog.prompt(
+      context,
+      title: '新建文件夹',
+      hint: '文件夹名称',
+      okLabel: '创建',
+    );
+    if (name == null || name.trim().isEmpty) return;
+    final ok = await cubit.createFolder(name);
+    if (!context.mounted) return;
+    if (!ok) {
+      final err = cubit.state.error;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(err ?? '创建失败')),
+        );
+    }
   }
 
   Future<void> _upload(BuildContext context, {required bool media}) async {
@@ -968,7 +997,9 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
     final cubit = context.read<DeviceFilesCubit>();
     final scheme = Theme.of(context).colorScheme;
     final entries = widget.entries;
-    final bottom = cubit.state.selectionMode && !cubit.isSelf ? 168.0 : 100.0;
+    final bottom = cubit.state.selectionMode ? 168.0 : 100.0;
+    final volumePicker =
+        cubit.state.treeAnchor == DirectoryTreeAnchor.volumePicker;
     final list = ListView.builder(
       controller: _scroll,
       physics: const AlwaysScrollableScrollPhysics(),
@@ -979,6 +1010,7 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
         final entry = entries[index];
         final selected = cubit.isSelected(entry);
         final isVolume = _isVolumeEntry(entry);
+        final canSelect = !volumePicker && !isVolume;
         return _PeerFileTouch(
           entry: entry,
           child: Column(
@@ -1002,7 +1034,7 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
                         : entry.isDirectory
                             ? const Text('文件夹')
                             : Text(entry.sizeLabel),
-                    trailing: cubit.state.selectionMode && !entry.isDirectory
+                    trailing: cubit.state.selectionMode && canSelect
                         ? Icon(
                             selected
                                 ? Icons.check_circle
@@ -1021,20 +1053,29 @@ class _ExternalListBodyState extends State<_ExternalListBody> {
         );
       },
     );
-    if (cubit.isSelf) return list;
     return DragSelectLayer(
-      enabled: true,
+      enabled: !volumePicker,
       selectionActive: cubit.state.selectionMode,
       controller: _scroll,
       metrics: UniformDragMetrics.fileList,
-      keys: [for (final entry in entries) entry.isDirectory ? null : _fileKey(entry)],
+      keys: [
+        for (final entry in entries)
+          (volumePicker || _isVolumeEntry(entry)) ? null : _fileKey(entry),
+      ],
       selected: cubit.state.selected,
       commitOnLongPress: false,
       onSelection: cubit.applyDragSelection,
       onStationaryLongPress: (index) {
         final entry = entries[index];
-        if (entry.isDirectory) return;
-        unawaited(_showPeerFileActions(context, cubit, entry));
+        if (volumePicker || _isVolumeEntry(entry)) return;
+        if (!cubit.isSelf && !entry.isDirectory) {
+          unawaited(_showPeerFileActions(context, cubit, entry));
+          return;
+        }
+        if (!cubit.state.selectionMode) {
+          cubit.enterSelection();
+        }
+        cubit.toggleSelect(entry);
       },
       child: list,
     );
@@ -1466,7 +1507,7 @@ double _gridBottomPad(BuildContext context) {
   final cubit = context.read<DeviceFilesCubit>();
   final state = cubit.state;
   final nav = 72 + MediaQuery.viewPaddingOf(context).bottom;
-  if (state.selectionMode && state.isDirectoryTree && !cubit.isSelf) {
+  if (state.selectionMode && state.isDirectoryTree) {
     return 168;
   }
   if (state.selectionMode && !state.isDirectoryTree) {
@@ -1642,6 +1683,9 @@ class _PeerFileTouch extends StatelessWidget {
     final peer = signals != null && signals.widget.hintEnabled;
     final grid = signals != null && signals.widget.gridSelect;
     final dragOwned = DragSelectLayer.owns(context);
+    final treeSelect = cubit.state.isDirectoryTree &&
+        cubit.state.treeAnchor != DirectoryTreeAnchor.volumePicker &&
+        !_isVolumeEntry(entry);
     return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
@@ -1650,7 +1694,9 @@ class _PeerFileTouch extends StatelessWidget {
             return;
           }
           if (cubit.state.selectionMode) {
-            if (!entry.isDirectory) cubit.toggleSelect(entry);
+            if (treeSelect || !entry.isDirectory) {
+              cubit.toggleSelect(entry);
+            }
             return;
           }
           if (entry.isDirectory) {
@@ -1670,7 +1716,8 @@ class _PeerFileTouch extends StatelessWidget {
         onLongPress: dragOwned || grid || peer
             ? null
             : () {
-                if (!cubit.state.selectionMode && !entry.isDirectory) {
+                if (!cubit.state.selectionMode) {
+                  if (!treeSelect && entry.isDirectory) return;
                   cubit.enterSelection();
                   cubit.toggleSelect(entry);
                 }
@@ -1841,13 +1888,15 @@ class _SelectionCountStrip extends StatelessWidget {
   }
 }
 
-class _PeerSelectionBar extends StatelessWidget {
-  const _PeerSelectionBar();
+class _DirectoryTreeSelectionBar extends StatelessWidget {
+  const _DirectoryTreeSelectionBar();
 
   @override
   Widget build(BuildContext context) {
     final cubit = context.read<DeviceFilesCubit>();
-    final count = cubit.state.selected.length;
+    final selected = cubit.selectedEntries();
+    final count = selected.length;
+    final hasFolder = selected.any((e) => e.isDirectory);
     final bottom = 72 + MediaQuery.viewPaddingOf(context).bottom + 12;
     return Positioned(
       left: 16,
@@ -1870,18 +1919,23 @@ class _PeerSelectionBar extends StatelessWidget {
                   ),
                 ),
               ),
-              TextButton(
-                onPressed: count == 0 ? null : () => cubit.downloadSelected(),
-                child: const Text('下载'),
-              ),
+              if (!cubit.isSelf)
+                TextButton(
+                  onPressed: count == 0
+                      ? null
+                      : () => cubit.downloadSelected(),
+                  child: const Text('下载'),
+                ),
               TextButton(
                 onPressed: count == 0
                     ? null
                     : () async {
                         final ok = await AppDialog.confirm(
                           context,
-                          title: '删除已选文件？',
-                          message: '将删除已选的 $count 个文件。',
+                          title: hasFolder ? '删除所选内容？' : '删除已选文件？',
+                          message: hasFolder
+                              ? '将删除已选的 $count 项。文件夹将连同其内全部文件一并删除，且不可恢复。'
+                              : '将删除已选的 $count 个文件。',
                           okLabel: '删除',
                           destructive: true,
                         );
