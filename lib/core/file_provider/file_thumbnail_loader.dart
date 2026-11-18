@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../../app/di/service_locator.dart';
+import '../common/app_logger.dart';
 import '../common/thumb_fetch_exception.dart';
 import '../image/media_image_cache.dart';
 import '../protocol/nas_api_paths.dart';
@@ -125,6 +126,7 @@ class FileThumbnailLoader {
     required bool isSelf,
     String? peerFingerprint,
   }) async {
+    final sw = Stopwatch()..start();
     try {
       if (isSelf) {
         if (entry.rootId == 'library' ||
@@ -132,17 +134,71 @@ class FileThumbnailLoader {
           final lib = serviceLocator.mediaLibraryService();
           final asset = await lib.findByRelativePath(entry.relativePath);
           if (asset != null) {
-            return lib.thumbnailFor(asset, maxPx: _gridPx);
+            final bytes = await lib.thumbnailFor(asset, maxPx: _gridPx);
+            sw.stop();
+            AppLogger.log(
+              'loader self library',
+              scope: 'thumb_diag',
+              details: {
+                'name': entry.relativePath,
+                'assetAbs': asset.absolutePath ?? '',
+                'bytes': bytes?.length ?? 0,
+                'ms': sw.elapsedMilliseconds,
+                'note': bytes == null || bytes.isEmpty
+                    ? 'library thumb null (no file fallback in grid path)'
+                    : 'ok',
+              },
+            );
+            return bytes;
           }
+          AppLogger.log(
+            'loader self library miss asset',
+            scope: 'thumb_diag',
+            details: {'name': entry.relativePath, 'rootId': entry.rootId},
+          );
         }
         final path = entry.absolutePath;
-        if (path == null || path.isEmpty) return null;
+        if (path == null || path.isEmpty) {
+          AppLogger.log(
+            'loader self no absolutePath',
+            scope: 'thumb_diag',
+            details: {'name': entry.relativePath, 'rootId': entry.rootId},
+          );
+          return null;
+        }
         final file = File(path);
-        if (!await file.exists()) return null;
-        return serviceLocator.thumbnailService().thumbnailFor(file, maxPx: _gridPx);
+        if (!await file.exists()) {
+          AppLogger.log(
+            'loader self file missing',
+            scope: 'thumb_diag',
+            details: {'path': path},
+          );
+          return null;
+        }
+        final bytes =
+            await serviceLocator.thumbnailService().thumbnailFor(file, maxPx: _gridPx);
+        sw.stop();
+        AppLogger.log(
+          'loader self file',
+          scope: 'thumb_diag',
+          details: {
+            'name': entry.relativePath,
+            'rootId': entry.rootId,
+            'bytes': bytes?.length ?? 0,
+            'ms': sw.elapsedMilliseconds,
+          },
+        );
+        return bytes;
       }
       final fp = peerFingerprint;
-      if (fp == null || fp.isEmpty) return null;
+      if (fp == null || fp.isEmpty) {
+        AppLogger.log(
+          'loader remote no peer',
+          scope: 'thumb_diag',
+          details: {'name': entry.relativePath},
+        );
+        return null;
+      }
       final bytes = await serviceLocator.peerApiClient().downloadBytes(
             fp,
             NasApiPaths.thumbnail,
@@ -152,11 +208,43 @@ class FileThumbnailLoader {
               NasApiQuery.type: ThumbImageTier.grid.wireName,
             },
           );
+      sw.stop();
+      AppLogger.log(
+        'loader remote grid',
+        scope: 'thumb_diag',
+        details: {
+          'name': entry.relativePath,
+          'rootId': entry.rootId,
+          'bytes': bytes?.length ?? 0,
+          'ms': sw.elapsedMilliseconds,
+        },
+      );
       if (bytes == null || bytes.isEmpty) return null;
       return Uint8List.fromList(bytes);
-    } on ThumbFetchException {
+    } on ThumbFetchException catch (e) {
+      sw.stop();
+      AppLogger.log(
+        'loader ThumbFetchException',
+        scope: 'thumb_diag',
+        error: e,
+        details: {
+          'name': entry.relativePath,
+          'retryable': e.retryable,
+          'ms': sw.elapsedMilliseconds,
+        },
+      );
       rethrow;
-    } catch (_) {
+    } catch (e) {
+      sw.stop();
+      AppLogger.log(
+        'loader catch',
+        scope: 'thumb_diag',
+        error: e,
+        details: {
+          'name': entry.relativePath,
+          'ms': sw.elapsedMilliseconds,
+        },
+      );
       return null;
     }
   }

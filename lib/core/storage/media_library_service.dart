@@ -12,6 +12,7 @@ class MediaLibraryService {
   MediaLibraryService({
     MediaLibrarySource? source,
     Future<Directory?> Function()? resolveScanRoot,
+    this.onBeforeDelete,
   }) : _source = source ??
             MediaLibrarySource.create(resolveScanRoot: resolveScanRoot);
 
@@ -19,6 +20,9 @@ class MediaLibraryService {
   static const rootDisplayName = MediaLibraryIds.rootDisplayName;
 
   final MediaLibrarySource _source;
+
+  /// 删原图前清理 grid/preview（由 DI 注入）。
+  final Future<void> Function(MediaLibraryAsset asset)? onBeforeDelete;
 
   List<MediaLibraryAsset>? _cache;
   Map<String, MediaLibraryAsset>? _byRelativePath;
@@ -144,6 +148,9 @@ class MediaLibraryService {
       _source.thumbnailFor(asset, maxPx: maxPx);
 
   Future<bool> deleteAsset(MediaLibraryAsset asset) async {
+    try {
+      await onBeforeDelete?.call(asset);
+    } catch (_) {}
     final ok = await _source.deleteAsset(asset);
     if (ok) invalidateCache();
     return ok;

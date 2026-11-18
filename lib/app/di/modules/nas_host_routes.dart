@@ -7,11 +7,11 @@ import '../../../core/storage/local_system_stats.dart';
 import '../../../core/storage/media_library_service.dart';
 import '../../../core/storage/share_reader.dart';
 import '../../../core/storage/storage_constants.dart';
+import '../../../core/storage/thumb_pipeline.dart';
 import '../../../features/nas/data/api/handlers/backup_handlers.dart';
 import '../../../features/nas/data/api/handlers/dashboard_handlers.dart';
 import '../../../features/nas/data/api/handlers/file_list_handler.dart';
 import '../../../features/nas/data/api/handlers/media_and_mgmt_handlers.dart';
-import '../../../features/nas/data/api/services/thumbnail_service.dart';
 import '../../../features/nas/data/api/services/video_hls_session_service.dart';
 import '../../../features/nas/data/nas_share_scope.dart';
 import '../../../features/nas/data/share_path_resolver.dart';
@@ -24,7 +24,7 @@ void mountNasHostRoutes({
   required Router router,
   required ShareReader shareReader,
   required SharePathResolver sharePathResolver,
-  required ThumbnailService thumbnailService,
+  required ThumbPipeline thumbPipeline,
   required MediaLibraryService mediaLibrary,
   required InboxCatalogService inboxCatalog,
   required BackupReceiveService backupReceive,
@@ -98,7 +98,7 @@ void mountNasHostRoutes({
     ThumbnailHandler.path,
     ThumbnailHandler(
       resolver: sharePathResolver,
-      thumbnails: thumbnailService,
+      pipeline: thumbPipeline,
       mediaLibrary: mediaLibrary,
       shareScope: shareScope,
     ).handler,

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../common/app_logger.dart';
 import '../common/thumb_fetch_exception.dart';
 import '../protocol/thumb_image_tier.dart';
 
@@ -253,12 +254,23 @@ class GridThumbnailCache extends ChangeNotifier {
     final desired = <String>{};
     final jobs = <_ThumbJob>[];
     var skipFailTtl = 0;
+    var hitCache = 0;
+    var skipInflight = 0;
+    var skipQueued = 0;
+    var skipNonMedia = 0;
+    var skipNotVisible = 0;
     for (var i = 0; i < req.entries.length; i++) {
       final e = req.entries[i];
-      if (!e.isMedia) continue;
+      if (!e.isMedia) {
+        skipNonMedia++;
+        continue;
+      }
       final absIndex = req.windowStartIndex + i;
       final inVisible = absIndex >= req.firstIndex && absIndex <= req.lastIndex;
-      if (!inVisible && !req.allowPreload) continue;
+      if (!inVisible && !req.allowPreload) {
+        skipNotVisible++;
+        continue;
+      }
 
       final key = keyFor(
         isSelf: req.isSelf,
@@ -267,14 +279,23 @@ class GridThumbnailCache extends ChangeNotifier {
         maxPx: req.maxPx,
       );
       desired.add(key);
-      if (peek(key) != null) continue;
+      if (peek(key) != null) {
+        hitCache++;
+        continue;
+      }
       final failAt = _failedUntil[key];
       if (failAt != null && DateTime.now().isBefore(failAt)) {
         skipFailTtl++;
         continue;
       }
-      if (_inflight.containsKey(key)) continue;
-      if (_queuedKeys.contains(key)) continue;
+      if (_inflight.containsKey(key)) {
+        skipInflight++;
+        continue;
+      }
+      if (_queuedKeys.contains(key)) {
+        skipQueued++;
+        continue;
+      }
 
       // priority: 可见=0；preload 按滚动方向偏置
       var priority = inVisible ? 0 : 2;
@@ -296,9 +317,13 @@ class GridThumbnailCache extends ChangeNotifier {
     }
 
     // 丢弃已离开窗口的排队任务（inflight 不取消，完成后若仍离屏仅占一次槽）。
+    var dropped = 0;
     _queue.removeWhere((j) {
       final drop = !desired.contains(j.key);
-      if (drop) _queuedKeys.remove(j.key);
+      if (drop) {
+        dropped++;
+        _queuedKeys.remove(j.key);
+      }
       return drop;
     });
 
@@ -313,6 +338,33 @@ class GridThumbnailCache extends ChangeNotifier {
       _queue.add(j);
       _queuedKeys.add(j.key);
     }
+    AppLogger.log(
+      'cache apply',
+      scope: 'thumb_diag',
+      details: {
+        'slice': req.entries.length,
+        'windowStart': req.windowStartIndex,
+        'visible': '${req.firstIndex}-${req.lastIndex}',
+        'allowPreload': req.allowPreload,
+        'scrollBias': req.scrollBias,
+        'desired': desired.length,
+        'hitCache': hitCache,
+        'newJobs': jobs.length,
+        'queueAfter': _queue.length,
+        'running': _running,
+        'inflight': _inflight.length,
+        'skipFailTtl': skipFailTtl,
+        'skipInflight': skipInflight,
+        'skipQueued': skipQueued,
+        'skipNonMedia': skipNonMedia,
+        'skipNotVisible': skipNotVisible,
+        'dropped': dropped,
+        'newIdx': jobs.isEmpty
+            ? ''
+            : '${jobs.first.absIndex}..${jobs.last.absIndex}',
+        'isSelf': req.isSelf,
+      },
+    );
     // 当前窗口仍有项在 failTtl 内：到期后再拉一遍，避免半屏停住。
     if (skipFailTtl > 0) {
       DateTime? earliest;
@@ -337,9 +389,25 @@ class GridThumbnailCache extends ChangeNotifier {
       if (peek(job.key) != null) continue;
       if (_inflight.containsKey(job.key)) continue;
       _running++;
+      AppLogger.log(
+        'cache fetch start',
+        scope: 'thumb_diag',
+        details: {
+          'absIndex': job.absIndex,
+          'priority': job.priority,
+          'rootId': job.entry.rootId,
+          'name': job.entry.relativePath,
+          'hasAbs':
+              job.entry.absolutePath != null && job.entry.absolutePath!.isNotEmpty,
+          'running': _running,
+          'queueLeft': _queue.length,
+        },
+      );
+      final sw = Stopwatch()..start();
       final future = job.fetcher(job.entry).then((bytes) {
         _inflight.remove(job.key);
         _running--;
+        sw.stop();
         if (bytes != null && bytes.isNotEmpty) {
           _cache[job.key] = bytes;
           while (_cache.length > maxEntries) {
@@ -347,16 +415,49 @@ class GridThumbnailCache extends ChangeNotifier {
           }
           _failedUntil.remove(job.key);
           if (!_updates.isClosed) _updates.add(job.key);
+          AppLogger.log(
+            'cache fetch ok',
+            scope: 'thumb_diag',
+            details: {
+              'absIndex': job.absIndex,
+              'bytes': bytes.length,
+              'ms': sw.elapsedMilliseconds,
+              'name': job.entry.relativePath,
+            },
+          );
         } else {
           _markFailed(job.key, retryable: false);
+          AppLogger.log(
+            'cache fetch empty',
+            scope: 'thumb_diag',
+            details: {
+              'absIndex': job.absIndex,
+              'ms': sw.elapsedMilliseconds,
+              'rootId': job.entry.rootId,
+              'name': job.entry.relativePath,
+              'failTtlSec': failTtl.inSeconds,
+            },
+          );
         }
         _pump();
         return bytes;
       }).catchError((Object e) {
         _inflight.remove(job.key);
         _running--;
+        sw.stop();
         final retryable = e is ThumbFetchException && e.retryable;
         _markFailed(job.key, retryable: retryable);
+        AppLogger.log(
+          'cache fetch error',
+          scope: 'thumb_diag',
+          error: e,
+          details: {
+            'absIndex': job.absIndex,
+            'ms': sw.elapsedMilliseconds,
+            'retryable': retryable,
+            'name': job.entry.relativePath,
+          },
+        );
         _pump();
         return null;
       });

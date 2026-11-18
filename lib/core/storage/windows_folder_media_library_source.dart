@@ -3,16 +3,31 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../common/app_logger.dart';
+import '../protocol/thumb_image_tier.dart';
+import '../../features/nas/data/api/services/thumbnail_service.dart';
 import 'app_paths.dart';
 import 'media_library_models.dart';
 import 'media_library_source.dart';
 import 'mime_types.dart';
+import 'thumb_cache_store.dart';
+import 'thumb_generation_gate.dart';
+import 'thumb_pipeline.dart';
 
 /// Windows：扫描指定共享根下的图片/视频/音频（定案：落盘根 = 墙根）。
 class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
-  WindowsFolderMediaLibrarySource({this.resolveScanRoot});
+  WindowsFolderMediaLibrarySource({
+    this.resolveScanRoot,
+    this.resolveThumbPipeline,
+    ThumbnailService? thumbnails,
+  }) : _thumbnails = thumbnails;
 
   final Future<Directory?> Function()? resolveScanRoot;
+
+  /// 惰性取统一流水线（本机墙 / Handler 共用落盘与闸）。
+  final ThumbPipeline? Function()? resolveThumbPipeline;
+
+  final ThumbnailService? _thumbnails;
 
   static const _imageExt = {
     '.jpg',
@@ -49,6 +64,7 @@ class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
     final out = <MediaLibraryAsset>[];
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
+      if (ThumbCacheStore.isUnderThumbsDir(entity.path)) continue;
       final name = p.basename(entity.path);
       if (name.startsWith('.')) continue;
       final ext = p.extension(name).toLowerCase();
@@ -107,8 +123,50 @@ class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
     MediaLibraryAsset asset, {
     int maxPx = 256,
   }) async {
-    // 媒体墙缩略图由 NAS ThumbnailService 经文件路径生成。
-    return null;
+    final path = asset.absolutePath?.trim() ?? '';
+    if (path.isEmpty) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+
+    final tier = maxPx >= ThumbImageTier.previewMaxPx
+        ? ThumbImageTier.preview
+        : ThumbImageTier.grid;
+    final pipeline = resolveThumbPipeline?.call();
+    if (pipeline != null) {
+      final bytes = await pipeline.getOrGenerate(
+        file: file,
+        tier: tier,
+        rootId: MediaLibraryIds.rootId,
+        name: asset.relativePath,
+        mtimeMs: asset.modifiedAtMs,
+        sizeBytes: asset.sizeBytes,
+        priority: ThumbGenPriority.remote,
+      );
+      AppLogger.log(
+        'library thumbnailFor pipeline',
+        scope: 'thumb_diag',
+        details: {
+          'rel': asset.relativePath,
+          'tier': tier.wireName,
+          'bytes': bytes?.length ?? 0,
+        },
+      );
+      return bytes;
+    }
+
+    final svc = _thumbnails ?? ThumbnailService();
+    final raw = await svc.thumbnailFor(file, maxPx: maxPx);
+    AppLogger.log(
+      'library thumbnailFor direct',
+      scope: 'thumb_diag',
+      details: {
+        'rel': asset.relativePath,
+        'abs': path,
+        'maxPx': maxPx,
+        'bytes': raw?.length ?? 0,
+      },
+    );
+    return raw;
   }
 
   @override

@@ -47,6 +47,12 @@ import '../../core/storage/share_reader.dart';
 import '../../core/storage/share_writer.dart';
 import '../../core/storage/storage_root_store.dart';
 import '../../core/storage/switch_share_root.dart';
+import '../../core/storage/thumb_cache_store.dart';
+import '../../core/storage/thumb_daily_scan.dart';
+import '../../core/storage/thumb_key_index.dart';
+import '../../core/storage/thumb_pipeline.dart';
+import '../../core/storage/thumb_warmup_scheduler.dart';
+import '../../core/storage/windows_folder_media_library_source.dart';
 import '../../core/task/transfer_task_store.dart';
 import '../../core/transfer/nas_transfer_service.dart';
 import '../../features/devices/application/chat_unread_store.dart';
@@ -126,6 +132,11 @@ class ServiceLocator {
   SharePathResolver? _sharePathResolver;
   NasShareScope? _nasShareScope;
   ThumbnailService? _thumbnailService;
+  ThumbCacheStore? _thumbCacheStore;
+  ThumbKeyIndex? _thumbKeyIndex;
+  ThumbPipeline? _thumbPipeline;
+  ThumbWarmupScheduler? _thumbWarmupScheduler;
+  ThumbDailyScan? _thumbDailyScan;
   BackupReceiveService? _backupReceive;
   BackupEngine? _backupEngine;
   BackupLocalStore? _backupLocalStore;
@@ -464,7 +475,22 @@ class ServiceLocator {
   StorageRootStore storageRootStore() {
     return _storageRootStore ??= StorageRootStore(
       keyValueStore: keyValueStore,
-      onPersisted: (reason) => _commitSharedReplica(reason),
+      onPersisted: (reason) async {
+        await _commitSharedReplica(reason);
+        if (reason.startsWith('storage_root')) {
+          try {
+            mediaLibraryService().invalidateCache();
+            thumbWarmupScheduler().onShareRootChanged();
+            // 换根后延后强制日扫，避免挡切换瞬间。
+            unawaited(
+              Future<void>.delayed(const Duration(seconds: 8), () async {
+                if (!isNasServiceEnabled) return;
+                await thumbDailyScan().maybeRun(force: true);
+              }),
+            );
+          } catch (_) {}
+        }
+      },
     );
   }
 
@@ -484,11 +510,62 @@ class ServiceLocator {
 
   MediaLibraryService mediaLibraryService() =>
       _mediaLibraryService ??= MediaLibraryService(
-        resolveScanRoot: () async {
-          final root = await storageRootStore().ensureCurrent();
-          return Directory(root.uriOrPath);
+        source: WindowsFolderMediaLibrarySource(
+          resolveScanRoot: () async {
+            final root = await storageRootStore().ensureCurrent();
+            return Directory(root.uriOrPath);
+          },
+          resolveThumbPipeline: thumbPipeline,
+        ),
+        onBeforeDelete: (asset) async {
+          await thumbPipeline().purgeSource(
+            rootId: MediaLibraryService.rootId,
+            name: asset.relativePath,
+            mtimeMs: asset.modifiedAtMs,
+            sizeBytes: asset.sizeBytes,
+          );
         },
       );
+
+  ThumbCacheStore thumbCacheStore() =>
+      _thumbCacheStore ??= ThumbCacheStore(rootStore: storageRootStore());
+
+  ThumbKeyIndex thumbKeyIndex() =>
+      _thumbKeyIndex ??= ThumbKeyIndex(rootStore: storageRootStore());
+
+  ThumbPipeline thumbPipeline() =>
+      _thumbPipeline ??= ThumbPipeline.withDefaultGates(
+        cache: thumbCacheStore(),
+        generator: thumbnailService(),
+        index: thumbKeyIndex(),
+      );
+
+  ThumbWarmupScheduler thumbWarmupScheduler() =>
+      _thumbWarmupScheduler ??= ThumbWarmupScheduler(
+        pipeline: thumbPipeline(),
+      );
+
+  ThumbDailyScan thumbDailyScan() => _thumbDailyScan ??= ThumbDailyScan(
+        kv: keyValueStore,
+        roots: storageRootStore(),
+        mediaLibrary: mediaLibraryService(),
+        pipeline: thumbPipeline(),
+        warmup: thumbWarmupScheduler(),
+      );
+
+  /// NAS 开：延后日扫（不挡打开）；关：停预热。
+  void _syncThumbWarmup(bool nasEnabled) {
+    if (nasEnabled) {
+      unawaited(
+        Future<void>.delayed(const Duration(seconds: 45), () async {
+          if (!isNasServiceEnabled) return;
+          await thumbDailyScan().maybeRun();
+        }),
+      );
+    } else {
+      thumbWarmupScheduler().stop();
+    }
+  }
 
   PermissionService permissionService() =>
       _permissionService ??= PermissionService();
@@ -819,7 +896,7 @@ class ServiceLocator {
       router: router,
       shareReader: shareReader(),
       sharePathResolver: sharePathResolver(),
-      thumbnailService: thumbnailService(),
+      thumbPipeline: thumbPipeline(),
       mediaLibrary: mediaLibraryService(),
       inboxCatalog: inboxCatalogService(),
       backupReceive: backupReceiveService(),
@@ -932,6 +1009,9 @@ class ServiceLocator {
       try {
         await NasKeepAlive.sync(true);
         try {
+          _syncThumbWarmup(true);
+        } catch (_) {}
+        try {
           final result = await ensureDiscovery(rebuild: false);
           _publishDiscoveryResult(result);
         } catch (error, st) {
@@ -1034,11 +1114,14 @@ class ServiceLocator {
   NasServiceSwitch nasServiceSwitch() {
     return _nasServiceSwitch ??= NasServiceSwitch(
       store: keyValueStore,
-      onChanged: (_) {
+      onChanged: (enabled) {
         // FGS 交接由 Start/Stop use case / deferred 显式 await NasKeepAlive.sync。
         // 此处仅尝试 UI 侧补 announce（FGS 接管后 ensureDiscovery 会 no-op）。
         try {
           discoveryService().announceNow();
+        } catch (_) {}
+        try {
+          _syncThumbWarmup(enabled);
         } catch (_) {}
       },
       onPersisted: () => _commitSharedReplica('nas_enabled'),
@@ -1051,6 +1134,9 @@ class ServiceLocator {
     await nasServiceSwitch().setEnabled(enabled);
     if (!enabled) {
       nasPeerSlotRegistry().clearAll();
+      thumbWarmupScheduler().stop();
+    } else {
+      thumbWarmupScheduler().start();
     }
   }
 
@@ -1665,6 +1751,16 @@ class ServiceLocator {
 
   /// 托盘「退出」：停宿主与发现，**不**改 NAS 开关持久化。
   Future<void> shutdownRuntimeForExit() async {
+    try {
+      await _thumbKeyIndex?.flush();
+    } catch (e, st) {
+      AppLogger.log(
+        'exit: thumb index flush failed',
+        scope: 'boot',
+        error: e,
+        stackTrace: st,
+      );
+    }
     try {
       await stopDiscovery();
     } catch (e, st) {

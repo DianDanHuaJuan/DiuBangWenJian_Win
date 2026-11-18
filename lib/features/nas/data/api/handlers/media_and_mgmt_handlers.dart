@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
@@ -16,31 +15,29 @@ import '../../../../../core/storage/incomplete_file.dart';
 import '../../../../../core/storage/media_library_service.dart';
 import '../../../../../core/storage/share_reader.dart';
 import '../../../../../core/storage/share_writer.dart';
+import '../../../../../core/storage/thumb_generation_gate.dart';
+import '../../../../../core/storage/thumb_pipeline.dart';
 import '../../../../../core/transfer/stream_transfer_tuning.dart';
 import '../../nas_share_scope.dart';
 import '../../share_path_resolver.dart';
-import '../services/grid_thumb_disk_cache.dart';
-import '../services/thumbnail_service.dart';
 
 /// GET /api/v1/thumbnail?type=grid|preview&rootId=&name=
 class ThumbnailHandler {
   static const path = NasApiPaths.thumbnail;
 
-  /// 单次现算上限（grid miss / preview）；超时返回空 → 404，释放连接。
-  static const generateTimeout = Duration(seconds: 8);
+  /// 排队 + 现算总上限；超时 → 404。
+  static const generateTimeout = Duration(seconds: 15);
 
   ThumbnailHandler({
     required this.resolver,
-    required this.thumbnails,
+    required this.pipeline,
     required this.mediaLibrary,
-    GridThumbDiskCache? gridCache,
     this.shareScope,
-  }) : gridCache = gridCache ?? GridThumbDiskCache();
+  });
 
   final SharePathResolver resolver;
-  final ThumbnailService thumbnails;
+  final ThumbPipeline pipeline;
   final MediaLibraryService mediaLibrary;
-  final GridThumbDiskCache gridCache;
   final NasShareScope? shareScope;
 
   Handler get handler => (Request request) async {
@@ -57,47 +54,26 @@ class ThumbnailHandler {
         if (tier == null) {
           return Response.badRequest(body: 'type must be grid or preview');
         }
-        final maxPx = tier.maxPx;
-
-        Future<List<int>?> generate() async {
-          if (rootId == MediaLibraryService.rootId) {
-            final asset = await mediaLibrary.findByRelativePath(name);
-            if (asset == null) return null;
-            if (!libraryAssetAllowed(shareScope, asset)) return null;
-            return mediaLibrary
-                .thumbnailFor(asset, maxPx: maxPx)
-                .timeout(generateTimeout, onTimeout: () => null);
-          }
-          final file = await resolveScopedFile(
-            scope: shareScope,
-            resolver: resolver,
-            rootId: rootId,
-            name: name,
-          );
-          if (file == null || !await file.exists()) return null;
-          return thumbnails
-              .thumbnailFor(file, maxPx: maxPx)
-              .timeout(generateTimeout, onTimeout: () => null);
+        final resolved = await _resolveSource(rootId: rootId, name: name);
+        if (resolved == null) {
+          return Response.notFound('file not found');
         }
 
         List<int>? bytes;
-        if (tier == ThumbImageTier.grid) {
-          final meta = await _sourceMeta(rootId: rootId, name: name);
-          if (meta == null) return Response.notFound('file not found');
-          final key = gridCache.cacheKey(
-            rootId: rootId,
-            name: name,
-            mtimeMs: meta.mtimeMs,
-            sizeBytes: meta.sizeBytes,
-          );
-          bytes = await gridCache.getOrPut(key, () async {
-            final raw = await generate();
-            if (raw == null || raw.isEmpty) return null;
-            return Uint8List.fromList(raw);
-          });
-        } else {
-          final raw = await generate();
-          bytes = raw == null || raw.isEmpty ? null : raw;
+        try {
+          bytes = await pipeline
+              .getOrGenerate(
+                file: resolved.file,
+                tier: tier,
+                rootId: rootId,
+                name: name,
+                mtimeMs: resolved.mtimeMs,
+                sizeBytes: resolved.sizeBytes,
+                priority: ThumbGenPriority.remote,
+              )
+              .timeout(generateTimeout, onTimeout: () => null);
+        } catch (_) {
+          bytes = null;
         }
 
         if (bytes == null || bytes.isEmpty) {
@@ -113,15 +89,24 @@ class ThumbnailHandler {
         );
       };
 
-  Future<({int mtimeMs, int sizeBytes})?> _sourceMeta({
+  Future<({File file, int mtimeMs, int sizeBytes})?> _resolveSource({
     required String rootId,
     required String name,
   }) async {
     if (rootId == MediaLibraryService.rootId) {
       final asset = await mediaLibrary.findByRelativePath(name);
-      if (asset == null) return null;
-      if (!libraryAssetAllowed(shareScope, asset)) return null;
-      return (mtimeMs: asset.modifiedAtMs, sizeBytes: asset.sizeBytes);
+      if (asset == null || !libraryAssetAllowed(shareScope, asset)) {
+        return null;
+      }
+      final path = asset.absolutePath?.trim() ?? '';
+      if (path.isEmpty) return null;
+      final file = File(path);
+      if (!await file.exists()) return null;
+      return (
+        file: file,
+        mtimeMs: asset.modifiedAtMs,
+        sizeBytes: asset.sizeBytes,
+      );
     }
     final file = await resolveScopedFile(
       scope: shareScope,
@@ -132,6 +117,7 @@ class ThumbnailHandler {
     if (file == null || !await file.exists()) return null;
     final st = await file.stat();
     return (
+      file: file,
       mtimeMs: st.modified.millisecondsSinceEpoch,
       sizeBytes: st.size,
     );

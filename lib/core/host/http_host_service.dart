@@ -220,13 +220,11 @@ class HttpHostService {
       );
     }
     final ms = DateTime.now().difference(started).inMilliseconds;
-    // 缩略图/content/ping：仅非 2xx 或慢请求；其余路径默认打点。
-    // ping 成功走 verbose，避免 presence 门闸刷屏。
-    final noisy = path.contains('/thumbnail') ||
-        path.contains('/content') ||
-        path.contains('/ping');
-    final failedOrSlow = response.statusCode >= 400 || ms >= 2000;
-    if (!noisy || failedOrSlow) {
+    // 默认静默成功路径；仅错误或极慢（≥3s）打重要日志。
+    // 全量 HTTP 明细需 AppLogger.verboseHttp=true。
+    final failed = response.statusCode >= 400;
+    final verySlow = ms >= 3000;
+    if (failed || verySlow) {
       AppLogger.log(
         'HTTPS ${shelfRequest.method} $path → ${response.statusCode}',
         scope: 'host',
@@ -236,7 +234,7 @@ class HttpHostService {
           'status': response.statusCode,
         },
       );
-    } else if (path.contains('/ping')) {
+    } else {
       AppLogger.logVerbose(
         'HTTPS ${shelfRequest.method} $path → ${response.statusCode}',
         scope: 'host',

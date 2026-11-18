@@ -24,22 +24,13 @@ class ExternalVolumeBrowser {
     final all = await _volumes.list();
     final list =
         all.where((v) => v.path.isNotEmpty).toList(growable: false);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'listBrowsableVolumes',
       scope: 'extvol',
       details: {
         'allCount': all.length,
         'count': list.length,
-        'items': [
-          for (final v in list)
-            {
-              'path': v.path,
-              'primary': v.isPrimary,
-              'removable': v.isRemovable,
-              'writable': v.writable,
-              'state': v.state,
-            },
-        ],
+        'paths': [for (final v in list) v.path],
       },
     );
     return list;
@@ -50,21 +41,13 @@ class ExternalVolumeBrowser {
     final all = await listBrowsableVolumes();
     final external =
         all.where((v) => !v.isPrimary).toList(growable: false);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'listExternalVolumes',
       scope: 'extvol',
       details: {
         'allCount': all.length,
         'externalCount': external.length,
-        'external': [
-          for (final v in external)
-            {
-              'path': v.path,
-              'removable': v.isRemovable,
-              'writable': v.writable,
-              'state': v.state,
-            },
-        ],
+        'paths': [for (final v in external) v.path],
       },
     );
     return external;

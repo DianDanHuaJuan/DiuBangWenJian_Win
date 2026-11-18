@@ -37,7 +37,7 @@ class WindowsStorageVolumeLister implements StorageVolumeLister {
         );
       } catch (_) {}
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       'StorageVolumes.list windows',
       scope: 'extvol',
       details: {

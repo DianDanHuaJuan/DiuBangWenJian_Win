@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -19,7 +19,7 @@ import '../../../../../core/storage/storage_access_diagnostics.dart';
 import '../../nas_share_scope.dart';
 import '../../share_path_resolver.dart';
 
-/// GET /api/v1/storage/volumes —— 可浏览卷列表（含全部盘符）。
+/// GET /api/v1/storage/volumes 鈥斺€?鍙祻瑙堝嵎鍒楄〃锛堝惈鍏ㄩ儴鐩樼锛夈€?
 class StorageVolumesHandler {
   static const path = NasApiPaths.storageVolumes;
 
@@ -36,7 +36,7 @@ class StorageVolumesHandler {
         }
         try {
           if (shareScope?.isCustom == true) {
-            AppLogger.log(
+            AppLogger.logVerbose(
               'storage/volumes skipped (custom shareScope)',
               scope: 'extvol_diag',
               details: {
@@ -50,12 +50,12 @@ class StorageVolumesHandler {
               headers: {'content-type': 'application/json; charset=utf-8'},
             );
           }
-          // 含全部盘符：对端目录树「根目录」需进入磁盘列表/卷根。
+          // 鍚叏閮ㄧ洏绗︼細瀵圭鐩綍鏍戙€屾牴鐩綍銆嶉渶杩涘叆纾佺洏鍒楄〃/鍗锋牴銆?
           final vols = await _browser.listBrowsableVolumes();
           final items = [
             for (final v in vols)
               {
-                // 给客户端现成 rootId，避免手机端自行拼接盘符踩坑。
+                // 缁欏鎴风鐜版垚 rootId锛岄伩鍏嶆墜鏈虹鑷鎷兼帴鐩樼韪╁潙銆?
                 'rootId': _browser.rootIdFor(v.path),
                 'path': AppPaths.portable(v.path),
                 'description': v.description,
@@ -63,12 +63,12 @@ class StorageVolumesHandler {
                 'isRemovable': v.isRemovable,
                 'writable': v.writable,
                 'state': v.state,
-                // 提示：这是磁盘卷，不是普通文件夹（旧客户端可忽略）。
+                // 鎻愮ず锛氳繖鏄鐩樺嵎锛屼笉鏄櫘閫氭枃浠跺す锛堟棫瀹㈡埛绔彲蹇界暐锛夈€?
                 'kind': 'volume',
                 'entryKind': 'disk',
               },
           ];
-          AppLogger.log(
+          AppLogger.logVerbose(
             'storage/volumes ok',
             scope: 'extvol_diag',
             details: {
@@ -104,9 +104,9 @@ class StorageVolumesHandler {
 
 /// GET /api/v1/files?rootId=&path=
 ///
-/// - `rootId` 空或 `library`：MediaStore 媒体（path 可选 image|video|audio）
-/// - `rootId=fs`：当前共享根目录树
-/// - `rootId=extvol:…`：外置卷文件夹浏览
+/// - `rootId` 绌烘垨 `library`锛歁ediaStore 濯掍綋锛坧ath 鍙€?image|video|audio锛?
+/// - `rootId=fs`锛氬綋鍓嶅叡浜牴鐩綍鏍?
+/// - `rootId=extvol:鈥锛氬缃嵎鏂囦欢澶规祻瑙?
 class FileListHandler {
   static const path = NasApiPaths.files;
 
@@ -135,7 +135,7 @@ class FileListHandler {
             AppPaths.portable(request.url.queryParameters['path'] ?? '');
         final isExtvol =
             rootId.startsWith(ExternalVolumeBrowser.rootIdPrefix);
-        AppLogger.log(
+        AppLogger.logVerbose(
           'GET /files',
           scope: isExtvol ? 'extvol_diag' : 'nas_files',
           details: {
@@ -162,7 +162,7 @@ class FileListHandler {
           final limit =
               int.tryParse(request.url.queryParameters['limit'] ?? '') ?? 0;
 
-          // 默认对外媒体墙；文件树请显式 rootId=fs。
+          // 榛樿瀵瑰濯掍綋澧欙紱鏂囦欢鏍戣鏄惧紡 rootId=fs銆?
           if (rootId.isEmpty || rootId == MediaLibraryService.rootId) {
             return _libraryResponse(relPath, offset: offset, limit: limit);
           }
@@ -193,7 +193,7 @@ class FileListHandler {
             rootId: rootId,
             relativePath: relPath,
           );
-          AppLogger.log(
+          AppLogger.logVerbose(
             'files fs/share list ok',
             scope: 'nas_files',
             details: {
@@ -245,7 +245,7 @@ class FileListHandler {
 
   Future<Response> _externalResponse(String rootId, String relPath) async {
     final volPath = externalBrowser.volumePathFromRootId(rootId);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'extvol _externalResponse',
       scope: 'extvol_diag',
       details: {
@@ -282,7 +282,7 @@ class FileListHandler {
       return Response.forbidden('invalid path');
     }
     final vols = await externalBrowser.listBrowsableVolumes();
-    var label = '外置存储';
+    var label = '澶栫疆瀛樺偍';
     var matchedVol = false;
     for (final v in vols) {
       if (externalBrowser.isSameVolumePath(v.path, volPath)) {
@@ -291,7 +291,7 @@ class FileListHandler {
         break;
       }
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       'extvol before listDirectory',
       scope: 'extvol_diag',
       details: {
@@ -305,7 +305,7 @@ class FileListHandler {
     try {
       var entries = await externalBrowser.listDirectory(
         volumePath: volPath,
-        volumeLabel: label.isEmpty ? '外置存储' : label,
+        volumeLabel: label.isEmpty ? '澶栫疆瀛樺偍' : label,
         relativePath: relPath,
       );
       if (shareScope?.isCustom == true) {
@@ -317,7 +317,7 @@ class FileListHandler {
               e,
         ];
       }
-      AppLogger.log(
+      AppLogger.logVerbose(
         'extvol list ok',
         scope: 'extvol_diag',
         details: {
@@ -386,7 +386,7 @@ class FileListHandler {
               'sizeBytes': e.sizeBytes,
               'modifiedAtMs': e.modifiedAtMs,
               'rootId': 'fs',
-              'rootDisplayName': '共享范围',
+              'rootDisplayName': '鍏变韩鑼冨洿',
             },
         ],
       }),
@@ -400,7 +400,7 @@ class FileListHandler {
     int limit = 0,
   }) async {
     try {
-      // limit<=0：兼容旧客户端全量；否则分页（默认页 120）。
+      // limit<=0锛氬吋瀹规棫瀹㈡埛绔叏閲忥紱鍚﹀垯鍒嗛〉锛堥粯璁ら〉 120锛夈€?
       final pageLimit = limit <= 0 ? 0 : limit.clamp(1, 500);
       final MediaLibraryPage page;
       if (shareScope?.isCustom == true) {
@@ -468,7 +468,7 @@ class FileListHandler {
         headers: {'content-type': 'application/json; charset=utf-8'},
       );
     } catch (e) {
-      // 相册查询失败时仍返回 200 空列表，避免对端误判「NAS 未开」。
+      // 鐩稿唽鏌ヨ澶辫触鏃朵粛杩斿洖 200 绌哄垪琛紝閬垮厤瀵圭璇垽銆孨AS 鏈紑銆嶃€?
       return Response.ok(
         jsonEncode({
           'rootId': MediaLibraryService.rootId,
@@ -487,7 +487,7 @@ class FileListHandler {
   }
 }
 
-/// GET /api/v1/files/content?rootId=&path=  （兼容 name=；支持 Range）
+/// GET /api/v1/files/content?rootId=&path=  锛堝吋瀹?name=锛涙敮鎸?Range锛?
 class FileContentHandler {
   static const path = NasApiPaths.filesContent;
 
@@ -515,7 +515,7 @@ class FileContentHandler {
               '',
         );
         final range = request.headers['range'] ?? '';
-        AppLogger.log(
+        AppLogger.logVerbose(
           'GET /files/content',
           scope: 'video_diag',
           details: {
@@ -572,7 +572,7 @@ class FileContentHandler {
             final length = await file.length();
             final name = p.basename(file.path);
             final mime = MimeTypes.fromFileNameOrOctet(name);
-            AppLogger.log(
+            AppLogger.logVerbose(
               'extvol content resolve ok',
               scope: 'video_diag',
               details: {
@@ -675,7 +675,7 @@ class FileContentHandler {
         final mime = asset.mimeType.isEmpty
             ? 'application/octet-stream'
             : asset.mimeType;
-        AppLogger.log(
+        AppLogger.logVerbose(
           'library content resolve ok',
           scope: 'video_diag',
           details: {
@@ -704,7 +704,7 @@ class FileContentHandler {
       );
       return Response.notFound('file not found');
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       'library content bytes ok',
       scope: 'video_diag',
       details: {'path': rel, 'length': bytes.length},
@@ -730,11 +730,11 @@ Response fileRangeResponse({
   required String fileName,
   required String mimeType,
 }) {
-  // 播流用 inline、不带 filename，避免非 ASCII 文件名炸 dart:io 头校验。
+  // 鎾祦鐢?inline銆佷笉甯?filename锛岄伩鍏嶉潪 ASCII 鏂囦欢鍚嶇偢 dart:io 澶存牎楠屻€?
   const disposition = ContentDisposition.inline;
   final rangeHeader = request.headers['range'];
   if (rangeHeader == null || !rangeHeader.startsWith('bytes=')) {
-    AppLogger.log(
+    AppLogger.logVerbose(
       'fileRangeResponse 200 full',
       scope: 'video_diag',
       details: {
@@ -779,7 +779,7 @@ Response fileRangeResponse({
     return Response(416, headers: {'content-range': 'bytes */$length'});
   }
   final chunkLen = end - start + 1;
-  AppLogger.log(
+  AppLogger.logVerbose(
     'fileRangeResponse 206',
     scope: 'video_diag',
     details: {
