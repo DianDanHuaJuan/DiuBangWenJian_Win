@@ -14,6 +14,7 @@ import '../../../../core/network/peer_address.dart';
 import '../../../common/widgets/section_header.dart';
 import '../../../nas/presentation/cubits/nas_control_cubit.dart';
 import '../peer_landing.dart';
+import 'device_chat_page.dart';
 import 'device_pair_page.dart';
 
 /// 设备页：统一列表（本机置顶 + 已配对/新发现），底栏「搜索设备」。
@@ -36,23 +37,39 @@ class _DevicesPageState extends State<DevicesPage> {
   bool _listening = false;
   bool _searching = false;
 
+  /// 右侧聊天选中的已配对对端（非 NAS）；NAS 仍走全页文件浏览。
+  String? _selectedChatPeerId;
+
   @override
   void initState() {
     super.initState();
     serviceLocator.devicesVisible.addListener(_onVisibility);
+    serviceLocator.devicesChatPeerRequest.addListener(_onChatPeerRequest);
     _onVisibility();
+    _consumeChatPeerRequest();
   }
 
   @override
   void dispose() {
     serviceLocator.devicesVisible.removeListener(_onVisibility);
+    serviceLocator.devicesChatPeerRequest.removeListener(_onChatPeerRequest);
     _stopListening();
     super.dispose();
+  }
+
+  void _onChatPeerRequest() => _consumeChatPeerRequest();
+
+  void _consumeChatPeerRequest() {
+    final id = serviceLocator.devicesChatPeerRequest.value;
+    if (id == null || !mounted) return;
+    serviceLocator.devicesChatPeerRequest.value = null;
+    setState(() => _selectedChatPeerId = id);
   }
 
   void _onVisibility() {
     if (serviceLocator.devicesVisible.value) {
       _startListening();
+      _consumeChatPeerRequest();
       // 从设置改名/换 emoji 返回时刷新本机卡。
       if (mounted) {
         setState(() {
@@ -153,65 +170,127 @@ class _DevicesPageState extends State<DevicesPage> {
       for (final n in _nearby) _DeviceRowData.discovered(n),
     ];
 
-    return Scaffold(
-      body: SafeArea(
-        child: RefreshIndicator(
-          color: const Color(0xFF3D8A5A),
-          onRefresh: _refreshDevices,
-          child: ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 112),
-            children: [
-              const SectionHeader(
-                title: '设备',
-                // 占位：日后手动添加对端 IP；暂不展示入口。
-                trailing: SizedBox(width: 36, height: 36),
-              ),
-              const SizedBox(height: 18),
-              BlocBuilder<NasControlCubit, NasControlState>(
-                bloc: serviceLocator.nasControlCubit(),
-                builder: (context, nasState) {
-                  return ValueListenableBuilder<String>(
-                    valueListenable: serviceLocator.hostAddressListenable,
-                    builder: (context, hostIp, _) {
-                      return FutureBuilder<DeviceIdentity>(
-                        future: _identity,
-                        builder: (context, snapshot) {
-                          final name = snapshot.data?.deviceName ?? '本机';
-                          final ip = _displayIp(hostIp);
-                          final nic = serviceLocator.hostInterfaceName;
-                          return _DeviceCard(
-                            emoji: snapshot.data?.emoji ?? '',
-                            title: name,
-                            tags: const [
-                              _DeviceTagLabel(
-                                text: '本机',
-                                color: _tagSelfBlue,
-                              ),
-                            ],
-                            subtitle: _ipLine(
-                              ip: nic.isEmpty || ip.isEmpty ? ip : '$ip · $nic',
-                              nasOn: nasState.enabled,
-                            ),
-                            onTap: () =>
-                                context.go(RoutePaths.devicesSelfFiles),
-                            trailing: const Icon(
-                              Icons.chevron_right,
-                              size: 22,
-                              color: Color(0xFFB0ADA6),
-                            ),
-                          );
-                        },
+    final listPane = RefreshIndicator(
+      color: const Color(0xFF3D8A5A),
+      onRefresh: _refreshDevices,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+        children: [
+          const SectionHeader(
+            title: '设备',
+            trailing: SizedBox(width: 36, height: 36),
+          ),
+          const SizedBox(height: 18),
+          BlocBuilder<NasControlCubit, NasControlState>(
+            bloc: serviceLocator.nasControlCubit(),
+            builder: (context, nasState) {
+              return ValueListenableBuilder<String>(
+                valueListenable: serviceLocator.hostAddressListenable,
+                builder: (context, hostIp, _) {
+                  return FutureBuilder<DeviceIdentity>(
+                    future: _identity,
+                    builder: (context, snapshot) {
+                      final name = snapshot.data?.deviceName ?? '本机';
+                      final ip = _displayIp(hostIp);
+                      final nic = serviceLocator.hostInterfaceName;
+                      return _DeviceCard(
+                        emoji: snapshot.data?.emoji ?? '',
+                        title: name,
+                        tags: const [
+                          _DeviceTagLabel(
+                            text: '本机',
+                            color: _tagSelfBlue,
+                          ),
+                        ],
+                        subtitle: _ipLine(
+                          ip: nic.isEmpty || ip.isEmpty ? ip : '$ip · $nic',
+                          nasOn: nasState.enabled,
+                        ),
+                        onTap: () =>
+                            context.go(RoutePaths.devicesSelfFiles),
+                        trailing: const Icon(
+                          Icons.chevron_right,
+                          size: 22,
+                          color: Color(0xFFB0ADA6),
+                        ),
                       );
                     },
                   );
                 },
-              ),
-              for (final row in others) ...[
-                const SizedBox(height: 12),
-                _RemoteDeviceCard(data: row),
-              ],
-            ],
+              );
+            },
+          ),
+          for (final row in others) ...[
+            const SizedBox(height: 12),
+            _RemoteDeviceCard(
+              data: row,
+              selected: row.peer?.fingerprint == _selectedChatPeerId,
+              onSelectChat: (fp) {
+                setState(() => _selectedChatPeerId = fp);
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+
+    final chatPeerId = _selectedChatPeerId;
+    final chatStillListed = chatPeerId != null &&
+        others.any(
+          (r) =>
+              r.peer?.fingerprint == chatPeerId &&
+              r.kind == _DeviceKind.paired &&
+              !r.nasOn,
+        );
+    final effectiveChatId = chatStillListed ? chatPeerId : null;
+    if (effectiveChatId == null &&
+        _selectedChatPeerId != null &&
+        mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selectedChatPeerId != null) {
+          setState(() => _selectedChatPeerId = null);
+        }
+      });
+    }
+
+    return Scaffold(
+      body: SafeArea(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(flex: 5, child: listPane),
+            const VerticalDivider(width: 1, color: Color(0xFFE7E3DA)),
+            Expanded(
+              flex: 7,
+              child: effectiveChatId == null
+                  ? const _DevicesChatEmptyPane()
+                  : DeviceChatPage(
+                      key: ValueKey(effectiveChatId),
+                      peerId: effectiveChatId,
+                      embedded: true,
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DevicesChatEmptyPane extends StatelessWidget {
+  const _DevicesChatEmptyPane();
+
+  @override
+  Widget build(BuildContext context) {
+    return const ColoredBox(
+      color: Color(0xFFF7F6F3),
+      child: Center(
+        child: Text(
+          '选择左侧设备开始聊天',
+          style: TextStyle(
+            fontSize: 14,
+            color: Color(0xFF8B867C),
           ),
         ),
       ),
@@ -341,9 +420,15 @@ class _DeviceRowData {
 enum _DeviceKind { paired, discovered }
 
 class _RemoteDeviceCard extends StatelessWidget {
-  const _RemoteDeviceCard({required this.data});
+  const _RemoteDeviceCard({
+    required this.data,
+    this.selected = false,
+    this.onSelectChat,
+  });
 
   final _DeviceRowData data;
+  final bool selected;
+  final ValueChanged<String>? onSelectChat;
 
   @override
   Widget build(BuildContext context) {
@@ -361,6 +446,7 @@ class _RemoteDeviceCard extends StatelessWidget {
           title: data.title,
           tags: data.tags,
           subtitle: data.subtitle,
+          selected: selected,
           onTap: () => _onTap(context),
           onLongPress: data.kind == _DeviceKind.paired
               ? () => unawaited(_confirmRevoke(context))
@@ -384,10 +470,10 @@ class _RemoteDeviceCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                    const Icon(
-                      Icons.chevron_right,
+                    Icon(
+                      data.nasOn ? Icons.chevron_right : Icons.chat_bubble_outline,
                       size: 22,
-                      color: Color(0xFFB0ADA6),
+                      color: const Color(0xFFB0ADA6),
                     ),
                   ],
                 ),
@@ -405,7 +491,13 @@ class _RemoteDeviceCard extends StatelessWidget {
       );
       return;
     }
-    unawaited(openPairedPeer(context, data.peer!.fingerprint));
+    final fp = data.peer!.fingerprint;
+    // NAS 对端：仍整页进入文件浏览。
+    if (data.nasOn) {
+      unawaited(openPairedPeer(context, fp));
+      return;
+    }
+    onSelectChat?.call(fp);
   }
 
   Future<void> _confirmRevoke(BuildContext context) async {
@@ -443,6 +535,7 @@ class _DeviceCard extends StatelessWidget {
     this.emoji = '',
     this.onLongPress,
     this.trailing,
+    this.selected = false,
   });
 
   final String emoji;
@@ -452,6 +545,7 @@ class _DeviceCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final Widget? trailing;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -464,9 +558,12 @@ class _DeviceCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         child: Ink(
           decoration: BoxDecoration(
-            color: _cardBg,
+            color: selected ? const Color(0xFFE4F3E8) : _cardBg,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _cardBorder, width: 1.25),
+            border: Border.all(
+              color: selected ? const Color(0xFF3D8A5A) : _cardBorder,
+              width: selected ? 1.6 : 1.25,
+            ),
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF3D8A5A).withValues(alpha: 0.07),

@@ -40,24 +40,32 @@ bool _isVideoFileName(String name) {
 }
 
 /// chat 子页：文字气泡 + 报价卡（阶段 2）。
+///
+/// [embedded] 为 true 时用于设备页右侧栏：无返回键，不抢占整页路由。
 class DeviceChatPage extends StatelessWidget {
-  const DeviceChatPage({super.key, required this.peerId});
+  const DeviceChatPage({
+    super.key,
+    required this.peerId,
+    this.embedded = false,
+  });
 
   final String peerId;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (_) => DeviceChatCubit(peerId: peerId)..start(),
-      child: _DeviceChatView(peerId: peerId),
+      child: _DeviceChatView(peerId: peerId, embedded: embedded),
     );
   }
 }
 
 class _DeviceChatView extends StatefulWidget {
-  const _DeviceChatView({required this.peerId});
+  const _DeviceChatView({required this.peerId, this.embedded = false});
 
   final String peerId;
+  final bool embedded;
 
   @override
   State<_DeviceChatView> createState() => _DeviceChatViewState();
@@ -137,28 +145,26 @@ class _DeviceChatViewState extends State<_DeviceChatView> {
 
   @override
   Widget build(BuildContext context) {
-    // canPop:false 时回调里只用 goToDevicesList（go），禁止 pop/maybePop。
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        unawaited(goToDevicesList(context));
-      },
-      child: Scaffold(
-        // 键盘只垫输入栏，避免整页 resize 拖着消息列表每帧重布局。
-        resizeToAvoidBottomInset: false,
-        appBar: AppBar(
-          leading: BackButton(
-            onPressed: () => unawaited(goToDevicesList(context)),
-          ),
-          title: Text(_peerName == '对方' ? '聊天' : _peerName),
-          bottom: _peerHasNas(widget.peerId)
-              ? PreferredSize(
-                  preferredSize: const Size.fromHeight(40),
-                  child: _ChatNasFilesBar(peerId: widget.peerId),
-                )
-              : null,
-        ),
+    final appBar = AppBar(
+      automaticallyImplyLeading: !widget.embedded,
+      leading: widget.embedded
+          ? null
+          : BackButton(
+              onPressed: () => unawaited(goToDevicesList(context)),
+            ),
+      title: Text(_peerName == '对方' ? '聊天' : _peerName),
+      bottom: _peerHasNas(widget.peerId)
+          ? PreferredSize(
+              preferredSize: const Size.fromHeight(40),
+              child: _ChatNasFilesBar(peerId: widget.peerId),
+            )
+          : null,
+    );
+
+    final scaffold = Scaffold(
+      // 键盘只垫输入栏，避免整页 resize 拖着消息列表每帧重布局。
+      resizeToAvoidBottomInset: false,
+      appBar: appBar,
         // 列表视口高度不变。键盘动画只平移列表，不改占位高度。
         body: Stack(
           fit: StackFit.expand,
@@ -290,7 +296,16 @@ class _DeviceChatViewState extends State<_DeviceChatView> {
             ),
           ],
         ),
-      ),
+    );
+
+    if (widget.embedded) return scaffold;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(goToDevicesList(context));
+      },
+      child: scaffold,
     );
   }
 

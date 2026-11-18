@@ -224,6 +224,9 @@ class ServiceLocator {
   /// 设备 Tab 是否为当前页。
   final ValueNotifier<bool> devicesVisible = ValueNotifier(false);
 
+  /// 请求设备页右侧打开指定对端气泡聊天（概览点设备等；消费后应置 null）。
+  final ValueNotifier<String?> devicesChatPeerRequest = ValueNotifier(null);
+
   /// 已配对设备全局通知（概览/设备两页共用；阶段 2 被 PeerRegistry
   /// 在线流正式替代——阶段 1 最小可见性方案）。
   ///

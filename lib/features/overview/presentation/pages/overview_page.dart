@@ -39,8 +39,19 @@ class OverviewPage extends StatelessWidget {
   }
 }
 
-class _OverviewView extends StatelessWidget {
+class _OverviewView extends StatefulWidget {
   const _OverviewView();
+
+  @override
+  State<_OverviewView> createState() => _OverviewViewState();
+}
+
+class _OverviewViewState extends State<_OverviewView> {
+  /// 本机信息卡：弹窗同宽；高度 = 卡高 × 0.5。
+  final GlobalKey _localCardKey = GlobalKey();
+
+  /// 伙伴设备卡：连接码面板锚点。
+  final GlobalKey _partnerCardKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
@@ -48,36 +59,39 @@ class _OverviewView extends StatelessWidget {
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () => context.read<OverviewCubit>().refresh(),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight - 44),
-                  child: Column(
+          // 卡片按内容高度排布，不撑满视口：否则锚点贴底，下方同宽面板无空间可放。
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SectionHeader(
+                  title: '概览',
+                  trailing: _OverviewPairMenuButton(
+                    partnerCardKey: _partnerCardKey,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                IntrinsicHeight(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const SectionHeader(
-                        title: '概览',
-                        trailing: _OverviewPairMenuButton(),
+                      Expanded(
+                        child: _LocalHeroCard(cardKey: _localCardKey),
                       ),
-                      const SizedBox(height: 16),
-                      IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const Expanded(child: _LocalHeroCard()),
-                            const SizedBox(width: 14),
-                            const Expanded(child: _PartnerDevicesCard()),
-                          ],
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: KeyedSubtree(
+                          key: _partnerCardKey,
+                          child: const _PartnerDevicesCard(),
                         ),
                       ),
                     ],
                   ),
                 ),
-              );
-            },
+              ],
+            ),
           ),
         ),
       ),
@@ -87,7 +101,9 @@ class _OverviewView extends StatelessWidget {
 
 /// 概览标题右侧「+」：仿微信即时气泡（无动画、顶角、分隔项）。
 class _OverviewPairMenuButton extends StatefulWidget {
-  const _OverviewPairMenuButton();
+  const _OverviewPairMenuButton({required this.partnerCardKey});
+
+  final GlobalKey partnerCardKey;
 
   @override
   State<_OverviewPairMenuButton> createState() =>
@@ -223,6 +239,9 @@ class _OverviewPairMenuButtonState extends State<_OverviewPairMenuButton> {
                                 showPairingSheet(
                                   context,
                                   preferredMode: PairingSheetMode.qrShow,
+                                  anchorKey: widget.partnerCardKey,
+                                  anchorHeightFactor: 2 / 3,
+                                  compactText: true,
                                 ),
                               );
                             },
@@ -340,7 +359,9 @@ BoxDecoration get _surfaceCard => BoxDecoration(
 
 /// 本机信息栏：展示名/品牌/型号；可点 NAS 与局域网 IP。
 class _LocalHeroCard extends StatefulWidget {
-  const _LocalHeroCard();
+  const _LocalHeroCard({required this.cardKey});
+
+  final GlobalKey cardKey;
 
   @override
   State<_LocalHeroCard> createState() => _LocalHeroCardState();
@@ -352,6 +373,7 @@ class _LocalHeroCardState extends State<_LocalHeroCard> {
     return BlocBuilder<OverviewCubit, OverviewState>(
       builder: (context, overview) {
         return Container(
+          key: widget.cardKey,
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
           decoration: _surfaceCard,
           child: Column(
@@ -424,7 +446,7 @@ class _LocalHeroCardState extends State<_LocalHeroCard> {
                 },
               ),
               const SizedBox(height: 16),
-              const _NasServiceChip(),
+              _NasServiceChip(widthAnchorKey: widget.cardKey),
               const SizedBox(height: 18),
               const Divider(height: 1, color: Color(0xFFE7E3DA)),
               const SizedBox(height: 18),
@@ -473,10 +495,25 @@ class _LocalHeroCardState extends State<_LocalHeroCard> {
   Future<void> _showLocalAddressPicker(BuildContext context) {
     return AppSheet.show<void>(
       context: context,
-      heightFactor: 0.52,
-      builder: (_) => const _LocalAddressSheetBody(),
+      anchorKey: widget.cardKey,
+      // 本机卡下方弹窗：高度 = 信息卡高度 × 2/3。
+      anchorHeightFactor: 2 / 3,
+      builder: (ctx) => _shrinkSheetText(
+        ctx,
+        child: const _LocalAddressSheetBody(),
+      ),
     );
   }
+}
+
+/// 本机卡弹窗：字号整体缩小约一号（含硬编码 fontSize）。
+Widget _shrinkSheetText(BuildContext context, {required Widget child}) {
+  return MediaQuery(
+    data: MediaQuery.of(context).copyWith(
+      textScaler: const TextScaler.linear(0.875),
+    ),
+    child: child,
+  );
 }
 
 /// 本机信息栏只读行：无灰底；左图标+标签，值靠右。
@@ -530,7 +567,9 @@ class _InfoDisplayRow extends StatelessWidget {
 
 /// NAS 胶囊：状态局限本组件，不触发身份/环区重建。
 class _NasServiceChip extends StatelessWidget {
-  const _NasServiceChip();
+  const _NasServiceChip({this.widthAnchorKey});
+
+  final GlobalKey? widthAnchorKey;
 
   /// 开启时直接走系统权限请求；通知或全部文件访问未授予则保持关闭。
   ///
@@ -571,69 +610,72 @@ class _NasServiceChip extends StatelessWidget {
     final cubit = serviceLocator.nasControlCubit();
     return AppSheet.show<void>(
       context: context,
-      heightFactor: 0.55,
+      anchorKey: widthAnchorKey,
+      anchorHeightFactor: 2 / 3,
       builder: (sheetContext) {
-        return BlocProvider.value(
-          value: cubit,
-          child: BlocBuilder<NasControlCubit, NasControlState>(
-            builder: (context, state) {
-              return AppSheetBody(
-                title: 'NAS 服务',
-                // 顶对齐，避免 Expanded 把选项行纵向撑满。
-                child: Column(
-                  children: [
-                    Material(
-                      color: const Color(0xFFF5F4F1),
-                      borderRadius: BorderRadius.circular(14),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.dns_outlined,
-                              size: 22,
-                              color: Color(0xFF3D8A5A),
-                            ),
-                            const SizedBox(width: 12),
-                            const Expanded(
-                              child: Text(
-                                'NAS服务',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF1A1918),
+        return _shrinkSheetText(
+          sheetContext,
+          child: BlocProvider.value(
+            value: cubit,
+            child: BlocBuilder<NasControlCubit, NasControlState>(
+              builder: (context, state) {
+                return AppSheetBody(
+                  title: 'NAS 服务',
+                  child: Column(
+                    children: [
+                      Material(
+                        color: const Color(0xFFF5F4F1),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.dns_outlined,
+                                size: 20,
+                                color: Color(0xFF3D8A5A),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text(
+                                  'NAS服务',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF1A1918),
+                                  ),
                                 ),
                               ),
-                            ),
-                            Text(
-                              state.enabled ? '开启' : '关闭',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Color(0xFF8B867C),
+                              Text(
+                                state.enabled ? '开启' : '关闭',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF8B867C),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Switch.adaptive(
-                              value: state.enabled,
-                              onChanged: (value) =>
-                                  _setEnabled(context, cubit, value),
-                            ),
-                          ],
+                              const SizedBox(width: 8),
+                              Switch.adaptive(
+                                value: state.enabled,
+                                onChanged: (value) =>
+                                    _setEnabled(context, cubit, value),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const Expanded(
-                      child: SingleChildScrollView(
-                        child: NasShareScopeSection(),
+                      const Expanded(
+                        child: SingleChildScrollView(
+                          child: NasShareScopeSection(),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            },
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
@@ -884,48 +926,52 @@ class _LocalAddressSheetBodyState extends State<_LocalAddressSheetBody> {
     return ValueListenableBuilder<String>(
       valueListenable: serviceLocator.hostAddressListenable,
       builder: (context, selected, _) => AppSheetBody(
-      title: '本机IP地址',
-      subtitle: '多网卡设备可能会有多个本机IP，请选择合适的地址。',
-      loading: _loading,
-      errorText: _error != null ? '检测失败：$_error' : null,
-      onRetry: () => unawaited(_reload()),
-      footer: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.refresh),
-            title: const Text('重新检测网卡'),
-            onTap: _loading ? null : () => unawaited(_reload()),
-          ),
-        ],
-      ),
-      child: candidates == null || candidates.isEmpty
-          ? const Center(child: Text('未发现可用 IPv4'))
-          // 主体区高度恒定（固定高度档）——列表直接占满并内部滚动
-          : ListView(
-              children: [
-                for (final c in candidates)
-                  ListTile(
-                    leading: Icon(
-                      c.address == selected
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_off,
-                    ),
-                    title: Text(c.address),
-                    subtitle: Text(c.interfaceName),
-                    selected: c.address == selected,
-                    onTap: () async {
-                      await serviceLocator.selectLocalAddress(
-                        c.address,
-                        interfaceName: c.interfaceName,
-                      );
-                      if (context.mounted) Navigator.of(context).pop();
-                    },
-                  ),
-              ],
+        title: '本机IP地址',
+        subtitle: '多网卡设备可能会有多个本机IP，请选择合适的地址。',
+        loading: _loading,
+        errorText: _error != null ? '检测失败：$_error' : null,
+        onRetry: () => unawaited(_reload()),
+        footer: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ListTile(
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              leading: const Icon(Icons.refresh, size: 20),
+              title: const Text('重新检测网卡'),
+              onTap: _loading ? null : () => unawaited(_reload()),
             ),
-    ),
+          ],
+        ),
+        child: candidates == null || candidates.isEmpty
+            ? const Center(child: Text('未发现可用 IPv4'))
+            : ListView(
+                children: [
+                  for (final c in candidates)
+                    ListTile(
+                      dense: true,
+                      visualDensity: VisualDensity.compact,
+                      leading: Icon(
+                        c.address == selected
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 20,
+                      ),
+                      title: Text(c.address),
+                      subtitle: Text(c.interfaceName),
+                      selected: c.address == selected,
+                      onTap: () async {
+                        await serviceLocator.selectLocalAddress(
+                          c.address,
+                          interfaceName: c.interfaceName,
+                        );
+                        if (context.mounted) Navigator.of(context).pop();
+                      },
+                    ),
+                ],
+              ),
+      ),
     );
   }
 }

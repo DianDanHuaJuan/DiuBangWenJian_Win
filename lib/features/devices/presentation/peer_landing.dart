@@ -105,7 +105,13 @@ Future<void> openPairedPeer(
     spinnerShown = false;
     // 点进该设备即清列表新消息红点（文字/图片统一走 ChatUnreadStore）。
     serviceLocator.chatUnreadStore().clear(fingerprint);
-    context.go(path);
+    // 聊天：进设备 Tab 右侧嵌入气泡（与设备页点选一致）；NAS 仍整页文件浏览。
+    if (path == RoutePaths.deviceChatFor(fingerprint)) {
+      serviceLocator.devicesChatPeerRequest.value = fingerprint;
+      context.go(RoutePaths.devices);
+    } else {
+      context.go(path);
+    }
   } finally {
     if (spinnerShown && context.mounted) {
       _popSpinner(context, true);

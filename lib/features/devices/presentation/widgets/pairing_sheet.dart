@@ -21,6 +21,11 @@ Future<void> showPairingSheet(
   String? prefillHost,
   int? prefillPort,
   PairingSheetMode preferredMode = PairingSheetMode.menu,
+  GlobalKey? anchorKey,
+  /// 与本机卡弹窗一致：高度 = 锚点卡高 × 系数（概览连接码用 2/3）。
+  double? anchorHeightFactor,
+  /// 与本机卡弹窗一致：字号缩小约一号。
+  bool compactText = false,
 }) {
   final cubit = PairingFlowCubit(
     hostService: serviceLocator.pairingHostService(),
@@ -39,38 +44,50 @@ Future<void> showPairingSheet(
 
   return AppSheet.show<void>(
     context: context,
-    // 连接码：二维码 + 配对密码 + 刷新，略高于 NAS 档。
     heightFactor: preferredMode == PairingSheetMode.qrShow ? 0.52 : 0.62,
-    builder: (sheetContext) => BlocProvider.value(
-      value: cubit,
-      child: BlocListener<PairingFlowCubit, PairingFlowState>(
-        listener: (ctx, state) {
-          if (state is PairingFlowSuccess) {
-            final peerName = state.peerName;
-            final peerFp = state.peerFingerprint;
-            Future.delayed(const Duration(milliseconds: 900), () async {
-              if (sheetContext.mounted) {
-                Navigator.of(sheetContext).maybePop();
-              }
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('配对成功：$peerName')),
-              );
-              await openPairedPeer(
-                context,
-                peerFp,
-                requireOnline: false,
-              );
-            });
-          }
-        },
-        child: PairingSheetBody(
-          prefillHost: prefillHost,
-          prefillPort: prefillPort,
-          preferredMode: preferredMode,
+    anchorKey: anchorKey,
+    anchorHeightFactor: anchorHeightFactor,
+    builder: (sheetContext) {
+      Widget body = BlocProvider.value(
+        value: cubit,
+        child: BlocListener<PairingFlowCubit, PairingFlowState>(
+          listener: (ctx, state) {
+            if (state is PairingFlowSuccess) {
+              final peerName = state.peerName;
+              final peerFp = state.peerFingerprint;
+              Future.delayed(const Duration(milliseconds: 900), () async {
+                if (sheetContext.mounted) {
+                  Navigator.of(sheetContext).maybePop();
+                }
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('配对成功：$peerName')),
+                );
+                await openPairedPeer(
+                  context,
+                  peerFp,
+                  requireOnline: false,
+                );
+              });
+            }
+          },
+          child: PairingSheetBody(
+            prefillHost: prefillHost,
+            prefillPort: prefillPort,
+            preferredMode: preferredMode,
+          ),
         ),
-      ),
-    ),
+      );
+      if (compactText) {
+        body = MediaQuery(
+          data: MediaQuery.of(sheetContext).copyWith(
+            textScaler: const TextScaler.linear(0.875),
+          ),
+          child: body,
+        );
+      }
+      return body;
+    },
   ).whenComplete(cubit.close);
 }
 

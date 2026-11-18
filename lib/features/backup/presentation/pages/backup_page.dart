@@ -9,7 +9,10 @@ import '../../domain/backup_models.dart';
 
 /// 文件备份专属页。交互对齐原客户端图库卡片，能力按施工方案：立即备份、继续、放弃、历史。
 class BackupPage extends StatefulWidget {
-  const BackupPage({super.key});
+  const BackupPage({super.key, this.embedded = false});
+
+  /// 设置页右侧栏内嵌时隐藏「返回设置页」。
+  final bool embedded;
 
   @override
   State<BackupPage> createState() => _BackupPageState();
@@ -157,38 +160,43 @@ class _BackupPageState extends State<BackupPage> {
     final scanning = _busy && active == null;
 
     return Scaffold(
-      appBar: AppBar(
-        leadingWidth: 150,
-        leading: Tooltip(
-          message: '返回设置页',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => Navigator.of(context).maybePop(),
-            child: const Padding(
-              padding: EdgeInsets.only(left: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    size: 22,
-                    color: _muted,
-                  ),
-                  SizedBox(width: 2),
-                  Text(
-                    '返回设置页',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      color: _muted,
+      appBar: widget.embedded
+          ? AppBar(
+              automaticallyImplyLeading: false,
+              title: const Text('文件备份'),
+            )
+          : AppBar(
+              leadingWidth: 150,
+              leading: Tooltip(
+                message: '返回设置页',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => Navigator.of(context).maybePop(),
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          size: 22,
+                          color: _muted,
+                        ),
+                        SizedBox(width: 2),
+                        Text(
+                          '返回设置页',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: _muted,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ),
       body: Stack(
         children: [
           SafeArea(

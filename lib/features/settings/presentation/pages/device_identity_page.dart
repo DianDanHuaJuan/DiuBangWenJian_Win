@@ -15,9 +15,16 @@ import '../../../common/widgets/section_header.dart';
 /// [initialIdentity] 由设置页传入缓存，避免进页再等一轮 loading。
 /// 头像墙等路由转场结束后再分批铺开，减轻跳转卡顿。
 class DeviceIdentityPage extends StatefulWidget {
-  const DeviceIdentityPage({super.key, this.initialIdentity});
+  const DeviceIdentityPage({
+    super.key,
+    this.initialIdentity,
+    this.embedded = false,
+  });
 
   final DeviceIdentity? initialIdentity;
+
+  /// 设置页右侧栏内嵌时隐藏返回键。
+  final bool embedded;
 
   @override
   State<DeviceIdentityPage> createState() => _DeviceIdentityPageState();
@@ -227,21 +234,29 @@ class _DeviceIdentityPageState extends State<DeviceIdentityPage> {
     return Scaffold(
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 112),
+          padding: EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            widget.embedded ? 24 : 112,
+          ),
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back),
-                ),
-                const Expanded(
-                  child: SectionHeader(title: '设备身份'),
-                ),
-                const SizedBox(width: 48),
-              ],
-            ),
+            if (widget.embedded)
+              const SectionHeader(title: '设备身份')
+            else
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                  const Expanded(
+                    child: SectionHeader(title: '设备身份'),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
             const SizedBox(height: 20),
             if (_loading)
               const Padding(

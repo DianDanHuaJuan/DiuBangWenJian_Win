@@ -53,17 +53,19 @@ class SettingsEntryTile extends StatelessWidget {
     required this.onTap,
     this.icon,
     this.leading,
+    this.selected = false,
   });
 
   final IconData? icon;
   final Widget? leading;
   final String title;
   final VoidCallback onTap;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
+      color: selected ? const Color(0xFFEAF3EC) : Colors.transparent,
       child: InkWell(
         onTap: onTap,
         child: SizedBox(
@@ -92,19 +94,23 @@ class SettingsEntryTile extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                       height: 1.2,
-                      color: Color(0xFF1A1918),
+                      color: selected
+                          ? const Color(0xFF2F6B45)
+                          : const Color(0xFF1A1918),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Icon(
-                  Icons.chevron_right_rounded,
+                  selected
+                      ? Icons.chevron_right_rounded
+                      : Icons.chevron_right_rounded,
                   size: 20,
-                  color: Colors.black.withValues(alpha: 0.32),
+                  color: Colors.black.withValues(alpha: selected ? 0.45 : 0.32),
                 ),
               ],
             ),
