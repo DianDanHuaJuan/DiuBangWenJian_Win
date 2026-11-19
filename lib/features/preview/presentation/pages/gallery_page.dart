@@ -463,7 +463,7 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
 
   Future<void> _ensureVideo() async {
     if (_video.isReady) {
-      AppLogger.log(
+      AppLogger.logVerbose(
         '_ensureVideo already ready → play',
         scope: 'video_diag',
         details: {
@@ -481,7 +481,7 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
       _error = null;
     });
 
-    AppLogger.log(
+    AppLogger.logVerbose(
       '_ensureVideo start',
       scope: 'video_diag',
       details: {
@@ -520,7 +520,7 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
         if (path == null || path.isEmpty) {
           throw Exception('本地视频不可用');
         }
-        AppLogger.log(
+        AppLogger.logVerbose(
           '_ensureVideo openLocal',
           scope: 'video_diag',
           details: {'path': path},
@@ -549,7 +549,7 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
           );
           throw Exception('无法解析播放地址');
         }
-        AppLogger.log(
+        AppLogger.logVerbose(
           '_ensureVideo openRemote',
           scope: 'video_diag',
           details: {
@@ -574,7 +574,7 @@ class _GalleryMediaPageState extends State<_GalleryMediaPage> {
         await _video.dispose();
         return;
       }
-      AppLogger.log(
+      AppLogger.logVerbose(
         '_ensureVideo ok',
         scope: 'video_diag',
         details: {

@@ -14,8 +14,6 @@ class NasVideoSession {
   Player? _player;
   VideoController? _controller;
   StreamSubscription<String>? _errorSub;
-  StreamSubscription<bool>? _playingSub;
-  StreamSubscription<bool>? _bufferingSub;
   double _playbackSpeed = 1.0;
   final ValueNotifier<double> speedNotifier = ValueNotifier(1.0);
 
@@ -25,7 +23,7 @@ class NasVideoSession {
 
   /// 打开本机文件。
   Future<void> openLocal(String path, {bool play = true}) async {
-    AppLogger.log(
+    AppLogger.logVerbose(
       'NasVideoSession.openLocal',
       scope: 'video_diag',
       details: {'path': path, 'play': play},
@@ -41,7 +39,7 @@ class NasVideoSession {
     required Map<String, String> headers,
     bool play = true,
   }) async {
-    AppLogger.log(
+    AppLogger.logVerbose(
       'NasVideoSession.openRemote',
       scope: 'video_diag',
       details: {
@@ -69,7 +67,7 @@ class NasVideoSession {
     _attachDiagStreams(player);
     _player = player;
     _controller = VideoController(player);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'NasVideoSession.player ready',
       scope: 'video_diag',
       details: {'disableTlsVerify': disableTlsVerify},
@@ -85,29 +83,11 @@ class NasVideoSession {
         details: {'error': msg},
       );
     });
-    _playingSub = player.stream.playing.listen((playing) {
-      AppLogger.log(
-        'media_kit playing',
-        scope: 'video_diag',
-        details: {'playing': playing},
-      );
-    });
-    _bufferingSub = player.stream.buffering.listen((buffering) {
-      AppLogger.log(
-        'media_kit buffering',
-        scope: 'video_diag',
-        details: {'buffering': buffering},
-      );
-    });
   }
 
   Future<void> _cancelDiagStreams() async {
     await _errorSub?.cancel();
-    await _playingSub?.cancel();
-    await _bufferingSub?.cancel();
     _errorSub = null;
-    _playingSub = null;
-    _bufferingSub = null;
   }
 
   Future<void> play() async => _player?.play();

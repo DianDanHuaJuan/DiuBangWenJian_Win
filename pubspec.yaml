@@ -71,12 +71,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
   assets:
     - assets/ffmpeg.exe
-    - assets/app_icon.ico
+    # 托盘 / 热重载：与 windows/runner/resources/app_icon.ico 同图
+    - windows/runner/resources/app_icon.ico
   fonts:
     - family: NotoSansSC
       fonts:
@@ -84,3 +86,13 @@ flutter:
           weight: 400
         - asset: assets/fonts/NotoSansCJKsc-Bold.otf
           weight: 700
+
+# 从 assets/icon/app_icon.png 生成 Windows 窗口/任务栏 ico（与托盘同图）。
+flutter_launcher_icons:
+  android: false
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    icon_size: 256

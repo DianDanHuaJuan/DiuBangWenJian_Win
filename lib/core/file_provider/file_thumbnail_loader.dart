@@ -136,7 +136,7 @@ class FileThumbnailLoader {
           if (asset != null) {
             final bytes = await lib.thumbnailFor(asset, maxPx: _gridPx);
             sw.stop();
-            AppLogger.log(
+            AppLogger.logVerbose(
               'loader self library',
               scope: 'thumb_diag',
               details: {
@@ -151,7 +151,7 @@ class FileThumbnailLoader {
             );
             return bytes;
           }
-          AppLogger.log(
+          AppLogger.logVerbose(
             'loader self library miss asset',
             scope: 'thumb_diag',
             details: {'name': entry.relativePath, 'rootId': entry.rootId},
@@ -159,7 +159,7 @@ class FileThumbnailLoader {
         }
         final path = entry.absolutePath;
         if (path == null || path.isEmpty) {
-          AppLogger.log(
+          AppLogger.logVerbose(
             'loader self no absolutePath',
             scope: 'thumb_diag',
             details: {'name': entry.relativePath, 'rootId': entry.rootId},
@@ -168,7 +168,7 @@ class FileThumbnailLoader {
         }
         final file = File(path);
         if (!await file.exists()) {
-          AppLogger.log(
+          AppLogger.logVerbose(
             'loader self file missing',
             scope: 'thumb_diag',
             details: {'path': path},
@@ -178,7 +178,7 @@ class FileThumbnailLoader {
         final bytes =
             await serviceLocator.thumbnailService().thumbnailFor(file, maxPx: _gridPx);
         sw.stop();
-        AppLogger.log(
+        AppLogger.logVerbose(
           'loader self file',
           scope: 'thumb_diag',
           details: {
@@ -192,7 +192,7 @@ class FileThumbnailLoader {
       }
       final fp = peerFingerprint;
       if (fp == null || fp.isEmpty) {
-        AppLogger.log(
+        AppLogger.logVerbose(
           'loader remote no peer',
           scope: 'thumb_diag',
           details: {'name': entry.relativePath},
@@ -209,7 +209,7 @@ class FileThumbnailLoader {
             },
           );
       sw.stop();
-      AppLogger.log(
+      AppLogger.logVerbose(
         'loader remote grid',
         scope: 'thumb_diag',
         details: {

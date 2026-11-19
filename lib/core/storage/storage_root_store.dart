@@ -7,6 +7,7 @@ import '../common/app_exception.dart';
 import '../common/app_logger.dart';
 import '../common/key_value_store.dart';
 import 'app_paths.dart';
+import 'backup_category.dart';
 import 'default_share_directory_probe.dart';
 import 'storage_access_diagnostics.dart';
 import 'storage_constants.dart';
@@ -82,7 +83,11 @@ class StorageRootStore {
       await onPersisted?.call('storage_root_default');
       return created;
     } catch (e, st) {
-      await StorageAccessDiagnostics.logSnapshot('ensureCurrent_create_failed');
+      if (AppLogger.verboseExtvol) {
+        await StorageAccessDiagnostics.logSnapshot(
+          'ensureCurrent_create_failed',
+        );
+      }
       AppLogger.log(
         'ensureCurrent create failed',
         scope: 'storage',
@@ -216,9 +221,12 @@ class StorageRootStore {
     }
   }
 
-  /// 创建默认写根：仅公共 `Download/diubangfiles`。
+  /// 创建默认写根：仅公共 `Download/diubangfiles`，并**仅此一次**建四分类空目录。
   Future<StorageRoot> _createDefaultRoot() async {
     final dir = await resolveDefaultShareDirectory();
+    for (final cat in BackupCategory.values) {
+      await Directory(p.join(dir.path, cat.folderName)).create(recursive: true);
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
     return StorageRoot(
       id: 'default_$now',
@@ -306,7 +314,9 @@ Future<Directory> _resolveDefaultShareDirectoryBody(
       scope: 'storage',
       details: {'path': public.path},
     );
-    await StorageAccessDiagnostics.logSnapshot('download_not_writable');
+    if (AppLogger.verboseExtvol) {
+      await StorageAccessDiagnostics.logSnapshot('download_not_writable');
+    }
     throw AppException(
       code: 'storage_public_not_writable',
       message: '公共 Download 目录不可写，请授予「所有文件访问」权限后重试',

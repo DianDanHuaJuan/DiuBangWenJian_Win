@@ -12,7 +12,6 @@ import '../../../core/realtime/realtime_event.dart';
 import '../../../core/realtime/realtime_session_service.dart';
 import '../../../core/storage/incomplete_file.dart';
 import '../../../core/storage/share_writer.dart';
-import '../../../core/storage/media_scanner.dart';
 import '../../../core/storage/share_receive_paths.dart';
 import '../../../core/task/sha256_stream_calculator.dart';
 import '../../../core/task/transfer_task.dart';
@@ -37,7 +36,6 @@ class OfferAcceptService {
     required RealtimeConnectionRegistry hubRegistry,
     required Future<bool> Function(String peerFingerprint) ensurePeerWs,
     void Function(String peerFingerprint)? onInboundChatActivity,
-    MediaScanner? mediaScanner,
     Sha256StreamCalculator sha256 = const Sha256StreamCalculator(),
     ChatOfferPoster? poster,
     Future<void> Function()? onOutboxChanged,
@@ -49,7 +47,6 @@ class OfferAcceptService {
         _hub = hubRegistry,
         _ensurePeerWs = ensurePeerWs,
         _onInboundChatActivity = onInboundChatActivity,
-        _scanner = mediaScanner ?? MediaScanner(),
         _sha256 = sha256,
         _poster = poster ?? ChatOfferPoster(),
         _onOutboxChanged = onOutboxChanged;
@@ -62,7 +59,6 @@ class OfferAcceptService {
   final RealtimeConnectionRegistry _hub;
   final Future<bool> Function(String peerFingerprint) _ensurePeerWs;
   final void Function(String peerFingerprint)? _onInboundChatActivity;
-  final MediaScanner _scanner;
   final Sha256StreamCalculator _sha256;
   final ChatOfferPoster _poster;
   final Future<void> Function()? _onOutboxChanged;
@@ -427,10 +423,12 @@ class OfferAcceptService {
         return;
       }
 
+      final root = await _writer.rootStore.ensureCurrent();
       final opened = await _writer.openWriteSink(
         preferredFileName: task.fileName,
         expectedLength: task.sizeBytes > 0 ? task.sizeBytes : null,
-        relativeDir: ShareReceivePaths.relativeDirFor(
+        relativeDir: ShareReceivePaths.relativeDirForReceive(
+          root: root,
           fileName: task.fileName,
         ),
       );
@@ -526,7 +524,6 @@ class OfferAcceptService {
       throw const AppException(code: 'checksum', message: '校验失败');
     }
 
-    await _scanner.scanPath(dest.path);
     await _tasks.updateState(
       task.id,
       TransferTaskState.done,
@@ -583,10 +580,14 @@ class OfferAcceptService {
     String? destPath;
     late final int len;
     try {
+      final root = await _writer.rootStore.ensureCurrent();
       final opened = await _writer.openWriteSink(
         preferredFileName: task.fileName,
         expectedLength: task.sizeBytes > 0 ? task.sizeBytes : null,
-        relativeDir: ShareReceivePaths.relativeDirFor(fileName: task.fileName),
+        relativeDir: ShareReceivePaths.relativeDirForReceive(
+          root: root,
+          fileName: task.fileName,
+        ),
       );
       await opened.sink.close();
       destPath = opened.result.absolutePath;
@@ -596,7 +597,6 @@ class OfferAcceptService {
       if (len <= 0) {
         throw const AppException(code: 'empty', message: '晋升文件为空');
       }
-      await _scanner.scanPath(dest.path);
       await _tasks.updateState(
         task.id,
         TransferTaskState.done,

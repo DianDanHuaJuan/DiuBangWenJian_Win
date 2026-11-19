@@ -3,20 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../app/di/service_locator.dart';
 import '../../../../app/router/peer_session_navigation.dart';
 import '../../../../app/ui/app_sheet.dart';
 import '../../../../app/ui/app_sheet_body.dart';
-import '../../../../app/ui/sheet_transition_gate.dart';
 import '../../../../core/common/app_logger.dart';
 import '../../../../core/discovery/peer_registry.dart';
 import '../../../../core/identity/device_identity_service.dart';
 import '../../../../core/identity/peer.dart';
 import '../../../../core/network/local_ipv4.dart';
 import '../../../../core/network/peer_address.dart';
-import '../../../../core/pairing/pairing_payload.dart';
 import '../../../../core/realtime/peer_runtime.dart';
 import '../../../common/widgets/section_header.dart';
 import '../../../devices/presentation/pairing_scan_helper.dart';
@@ -571,10 +568,6 @@ class _NasServiceChip extends StatelessWidget {
 
   final GlobalKey? widthAnchorKey;
 
-  /// 开启时直接走系统权限请求；通知或全部文件访问未授予则保持关闭。
-  ///
-  /// 通知：仅 Android 13+ 有运行时 POST_NOTIFICATIONS；更低版本默认可用。
-  /// 存储：Android 11+ 需全部文件访问；更低版本需传统存储/媒体权限。
   Future<void> _setEnabled(
     BuildContext context,
     NasControlCubit cubit,
@@ -585,16 +578,11 @@ class _NasServiceChip extends StatelessWidget {
       return;
     }
 
-    final gatesOk =
-        await serviceLocator.permissionService().requestNasEnableGates();
-    if (!context.mounted) return;
-    if (!gatesOk) return;
-
-    // UI 线程预建共享根，避免首个远端 fs 请求在 FGS 里触发建根 + request。
+    // UI 线程预建共享根，避免首个远端 fs 请求触发建根。
     try {
       await serviceLocator.storageRootStore().ensureCurrent();
     } catch (e) {
-      // 门禁已过但仍建根失败：仍允许开 NAS（媒体墙可用）；fs 会带明确错误。
+      // 建根失败仍允许开 NAS（媒体墙可用）；fs 会带明确错误。
       AppLogger.log(
         'NAS enable ensureCurrent failed',
         scope: 'storage',
@@ -694,186 +682,6 @@ class _NasServiceChip extends StatelessWidget {
             onTap: () => _showNasDetailSheet(context),
           );
         },
-      ),
-    );
-  }
-}
-
-/// 连接胶囊：先出轻壳滑入；进场动画结束后再刷 IP / 启宿主 / 绘 QR，
-/// 避免重活与滑动抢帧（看起来像「瞬间弹出」）。
-class _OverviewPairingSheetBody extends StatefulWidget {
-  const _OverviewPairingSheetBody({required this.password});
-
-  final String password;
-
-  @override
-  State<_OverviewPairingSheetBody> createState() =>
-      _OverviewPairingSheetBodyState();
-}
-
-class _OverviewPairingSheetBodyState extends State<_OverviewPairingSheetBody> {
-  Future<PairingPayload>? _payloadFuture;
-  Animation<double>? _routeAnimation;
-  bool _prepareStarted = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final animation = ModalRoute.of(context)?.animation;
-    if (identical(animation, _routeAnimation)) return;
-
-    _routeAnimation?.removeStatusListener(_onRouteStatus);
-    _routeAnimation = animation;
-
-    if (animation == null ||
-        animation.status == AnimationStatus.completed ||
-        animation.value >= 1.0) {
-      _startPrepare();
-      return;
-    }
-    animation.addStatusListener(_onRouteStatus);
-  }
-
-  void _onRouteStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed) {
-      _startPrepare();
-    }
-  }
-
-  void _startPrepare() {
-    if (_prepareStarted) return;
-    _prepareStarted = true;
-    setState(() {
-      _payloadFuture = _preparePayload();
-    });
-  }
-
-  Future<PairingPayload> _preparePayload() async {
-    await serviceLocator.localBasics.refresh(stats: false, address: true);
-    await serviceLocator.ensureHostRunning();
-    final host = await serviceLocator.pairingHostService();
-    return host.buildQrPayload();
-  }
-
-  @override
-  void dispose() {
-    _routeAnimation?.removeStatusListener(_onRouteStatus);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final future = _payloadFuture;
-    if (future == null) {
-      // 进场中：只绘标题 + 密码条 + 轻量占位，保证滑动帧充足
-      return AppSheetBody(
-        title: '配对本机',
-        subtitle: '对方可扫码，或在设备页输入下方密码',
-        loading: true,
-        footer: _buildPasswordRow(context),
-        child: const SizedBox.shrink(),
-      );
-    }
-
-    return FutureBuilder<PairingPayload>(
-      future: future,
-      builder: (context, snapshot) {
-        final payload = snapshot.data;
-        final ready = snapshot.connectionState == ConnectionState.done &&
-            payload != null &&
-            !snapshot.hasError;
-        return AppSheetBody(
-          title: '配对本机',
-          subtitle: '对方可扫码，或在设备页输入下方密码',
-          loading: !ready && !snapshot.hasError,
-          errorText: snapshot.hasError
-              ? '二维码生成失败：${snapshot.error ?? '未知错误'}'
-              : null,
-          onRetry: () => setState(() {
-            _payloadFuture = _preparePayload();
-          }),
-          footer: _buildPasswordRow(context),
-          child: ready
-              ? SheetTransitionGate(
-                  placeholder: const Center(child: CircularProgressIndicator()),
-                  builder: (context) => RepaintBoundary(
-                    child: Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF5F4F1),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: QrImageView(
-                            data: payload.encode(),
-                            size: 168,
-                            backgroundColor: const Color(0xFFF5F4F1),
-                            errorCorrectionLevel: QrErrorCorrectLevel.M,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          '${payload.host}:${payload.port}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFF8B867C),
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : const SizedBox.shrink(),
-        );
-      },
-    );
-  }
-
-  /// 密码复制条：常驻 footer（首帧即绘，不随 QR 加载态变化）。
-  Widget _buildPasswordRow(BuildContext context) {
-    return Material(
-      color: const Color(0xFFF5F4F1),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          if (widget.password.isEmpty) return;
-          Clipboard.setData(ClipboardData(text: widget.password));
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('已复制配对密码')));
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.lock_outline,
-                size: 20,
-                color: Color(0xFF8B867C),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                '配对密码',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: const Color(0xFF8B867C)),
-              ),
-              const Spacer(),
-              Text(
-                widget.password.isEmpty ? '…' : widget.password,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 2,
-                  color: Color(0xFF1A1918),
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.copy, size: 16, color: Color(0xFF8B867C)),
-            ],
-          ),
-        ),
       ),
     );
   }

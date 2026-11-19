@@ -11,7 +11,6 @@ import '../../core/common/key_value_store.dart';
 import '../../core/database/app_database.dart';
 import '../../core/device/device_file_service.dart';
 import '../../core/device/local_pick_facade.dart';
-import '../../core/device/permission_service.dart';
 import '../../core/device/local_basics.dart';
 import '../../core/discovery/discovery_foreground_guard.dart';
 import '../../core/discovery/discovery_service.dart';
@@ -158,7 +157,6 @@ class ServiceLocator {
   OfferAcceptService? _offerAcceptService;
   ChatUnreadStore? _chatUnreadStore;
   LocalBasics? _localBasics;
-  PermissionService? _permissionService;
   DeviceFileService? _deviceFileService;
   LocalPickFacade? _localPickFacade;
   NasTransferService? _nasTransferService;
@@ -570,16 +568,12 @@ class ServiceLocator {
     }
   }
 
-  PermissionService permissionService() =>
-      _permissionService ??= PermissionService();
-
   DeviceFileService deviceFileService() =>
       _deviceFileService ??= DeviceFileService();
 
   /// 本地选文件门面（相册 + 任意文件 path）。
   LocalPickFacade localPickFacade() => _localPickFacade ??= LocalPickFacade(
         deviceFiles: deviceFileService(),
-        permissions: permissionService(),
       );
 
   /// 传输任务表。

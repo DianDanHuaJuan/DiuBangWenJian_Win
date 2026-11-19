@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../../app/di/service_locator.dart';
-import '../../../../app/ui/app_dialog.dart';
 import '../../data/nas_share_scope.dart';
 
 /// NAS 弹窗中的共享范围：右侧下拉展开已选目录。
@@ -21,27 +20,8 @@ class _NasShareScopeSectionState extends State<NasShareScopeSection> {
 
   NasShareScope get _scope => serviceLocator.nasShareScope();
 
-  Future<bool> _ensureAccess() async {
-    final result =
-        await serviceLocator.permissionService().requestAllStorageForNas();
-    if (result.manageExternalOk) return true;
-    if (!mounted) return false;
-    final open = await AppDialog.confirm(
-      context,
-      title: '需要全部文件访问权限',
-      message: '按文件夹共享需要「所有文件访问」权限。请在系统设置中开启后重试。',
-      okLabel: '去设置',
-      cancelLabel: '取消',
-    );
-    if (open) {
-      await serviceLocator.permissionService().openAppSettings();
-    }
-    return false;
-  }
-
   Future<void> _pickAndAdd() async {
     if (_busy) return;
-    if (!await _ensureAccess()) return;
     final path = await serviceLocator.deviceFileService().pickDirectory();
     if (path == null || path.isEmpty || !mounted) return;
     setState(() => _busy = true);

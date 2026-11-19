@@ -7,7 +7,6 @@ import '../../../app/di/service_locator.dart';
 import '../../../core/file_provider/file_entry.dart';
 import '../../../core/protocol/nas_api_paths.dart';
 import '../../../core/storage/media_library_service.dart';
-import '../../../core/storage/media_scanner.dart';
 import '../../../core/storage/nas_peer_preview_cache.dart';
 import '../../../core/storage/share_receive_paths.dart';
 import '../presentation/cubit/gallery_original_download_state.dart';
@@ -107,10 +106,7 @@ class ViewOriginalUseCase {
 
 /// 将已就绪原图正式保存到共享根四分类（非系统 Pictures）。
 class SaveOriginalUseCase {
-  SaveOriginalUseCase({MediaScanner? mediaScanner})
-      : _scanner = mediaScanner ?? MediaScanner();
-
-  final MediaScanner _scanner;
+  SaveOriginalUseCase();
 
   Future<GalleryOriginalDownloadState> call({
     required GalleryOriginalDownloadState current,
@@ -129,10 +125,15 @@ class SaveOriginalUseCase {
       final name = p.basename(displayName).trim().isEmpty
           ? p.basename(path)
           : p.basename(displayName);
+      final root =
+          await serviceLocator.storageRootStore().ensureCurrent();
       final opened = await serviceLocator.shareWriter().openWriteSink(
             preferredFileName: name,
             expectedLength: await src.length(),
-            relativeDir: ShareReceivePaths.relativeDirFor(fileName: name),
+            relativeDir: ShareReceivePaths.relativeDirForReceive(
+              root: root,
+              fileName: name,
+            ),
           );
       await opened.sink.close();
       destPath = opened.result.absolutePath;
@@ -141,7 +142,6 @@ class SaveOriginalUseCase {
       if (await dest.length() <= 0) {
         throw StateError('empty save');
       }
-      await _scanner.scanPath(dest.path);
       return current.copyWith(
         isSaving: false,
         publicUri: dest.path,

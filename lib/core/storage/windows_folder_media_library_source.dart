@@ -142,7 +142,7 @@ class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
         sizeBytes: asset.sizeBytes,
         priority: ThumbGenPriority.remote,
       );
-      AppLogger.log(
+      AppLogger.logVerbose(
         'library thumbnailFor pipeline',
         scope: 'thumb_diag',
         details: {
@@ -156,7 +156,7 @@ class WindowsFolderMediaLibrarySource implements MediaLibrarySource {
 
     final svc = _thumbnails ?? ThumbnailService();
     final raw = await svc.thumbnailFor(file, maxPx: maxPx);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'library thumbnailFor direct',
       scope: 'thumb_diag',
       details: {

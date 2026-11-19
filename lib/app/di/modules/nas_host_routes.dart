@@ -86,10 +86,12 @@ void mountNasHostRoutes({
       openReceiveSink: ({
         required String preferredFileName,
         int? expectedLength,
+        String directory = '',
       }) =>
           inboxCatalog.openReceiveSink(
             preferredFileName: preferredFileName,
             expectedLength: expectedLength,
+            directory: directory,
           ),
       notifyWritten: inboxCatalog.notifyWritten,
     ).handler,

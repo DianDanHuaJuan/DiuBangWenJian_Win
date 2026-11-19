@@ -11,7 +11,6 @@ import 'package:diubangwenjian/core/auth/peer_fingerprint_middleware.dart';
 import 'package:diubangwenjian/core/common/key_value_store.dart';
 import 'package:diubangwenjian/core/identity/peer.dart';
 import 'package:diubangwenjian/core/storage/media_library_service.dart';
-import 'package:diubangwenjian/core/storage/media_scanner.dart';
 import 'package:diubangwenjian/core/storage/share_reader.dart';
 import 'package:diubangwenjian/core/storage/share_writer.dart';
 import 'package:diubangwenjian/core/storage/storage_constants.dart';
@@ -114,11 +113,10 @@ void main() {
     expect(await f.exists(), isFalse);
   });
 
-  test('WebDAV PUT 写入共享根四分类', () async {
+  test('WebDAV PUT 换根后写入共享根顶层', () async {
     final inbox = InboxCatalogService(
       rootStore: roots,
       shareWriter: writer,
-      mediaScanner: MediaScanner(),
     );
     final handler = DavPutHandler(
       receiveFile: ({
@@ -137,8 +135,42 @@ void main() {
       authed('PUT', '/dav/hello.bin', body: [1, 2, 3, 4]),
     );
     expect(response.statusCode, 201);
-    // .bin → 其他
-    final dest = File(p.join(tempDir.path, '其他', 'hello.bin'));
+    final dest = File(p.join(tempDir.path, 'hello.bin'));
+    expect(await dest.exists(), isTrue);
+  });
+
+  test('WebDAV PUT 默认安装根写入四分类', () async {
+    await roots.setCurrent(
+      StorageRoot(
+        id: 'default_1',
+        kind: StorageRootKind.path,
+        uriOrPath: tempDir.path,
+        displayName: StorageConstants.displayPathLabel,
+        addedAtMs: 1,
+      ),
+    );
+    final inbox = InboxCatalogService(
+      rootStore: roots,
+      shareWriter: writer,
+    );
+    final handler = DavPutHandler(
+      receiveFile: ({
+        required preferredFileName,
+        required bytes,
+        required peerFingerprint,
+      }) async {
+        final r = await inbox.receiveFile(
+          preferredFileName: preferredFileName,
+          bytes: bytes,
+        );
+        return (fileName: r.fileName, rootId: r.rootId);
+      },
+    ).handler;
+    final response = await handler(
+      authed('PUT', '/dav/photo.jpg', body: [1, 2, 3, 4]),
+    );
+    expect(response.statusCode, 201);
+    final dest = File(p.join(tempDir.path, '图片', 'photo.jpg'));
     expect(await dest.exists(), isTrue);
   });
 

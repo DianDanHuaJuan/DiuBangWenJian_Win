@@ -9,7 +9,6 @@ import '../../../../app/di/service_locator.dart';
 import '../../../../app/router/peer_session_navigation.dart';
 import '../../../../app/router/route_paths.dart';
 import '../../../../app/ui/app_dialog.dart';
-import '../../../../core/common/app_logger.dart';
 import '../../../../core/file_provider/file_entry.dart';
 import '../../../../core/platform/browse_surface_labels.dart';
 import '../../../../core/storage/external_volume_browser.dart';
@@ -1258,12 +1257,8 @@ class _GridBodyState extends State<_GridBody> {
     final extent = _scroll.position.viewportDimension;
     final offset = _scroll.offset;
     // 近似：正方形格子 + 间距 4；左右 padding 24*2。
-    // 注意：MediaQuery 全窗宽度在有侧栏时会大于 Grid 实际宽度，导致 cell/rowH
-    // 估大 → lastIndex 偏小 → 屏下半可见格不进请求（thumb_diag 对比两项宽度）。
-    final mediaW = MediaQuery.sizeOf(context).width;
-    final box = context.findRenderObject() as RenderBox?;
-    final layoutW = box != null && box.hasSize ? box.size.width : null;
-    final width = mediaW - 48;
+    // MediaQuery 全窗宽度在有侧栏时会大于 Grid 实际宽度，cell/rowH 可能估大。
+    final width = MediaQuery.sizeOf(context).width - 48;
     final cell = (width - (_crossAxisCount - 1) * 4) / _crossAxisCount;
     if (cell <= 0) return;
     final rowH = cell + 4;
@@ -1274,21 +1269,6 @@ class _GridBodyState extends State<_GridBody> {
       0,
       widget.entries.isEmpty ? 0 : widget.entries.length - 1,
     );
-    // 若用 layout 实际宽度重算，可见区会覆盖到哪（仅诊断，不改调度）。
-    int? altLast;
-    double? altCell;
-    if (layoutW != null && layoutW > 48) {
-      altCell = (layoutW - 48 - (_crossAxisCount - 1) * 4) / _crossAxisCount;
-      if (altCell > 0) {
-        final altRowH = altCell + 4;
-        final altLastRow =
-            ((offset + extent) / altRowH).ceil().clamp(0, 1 << 20);
-        altLast = ((altLastRow + 1) * _crossAxisCount - 1).clamp(
-          0,
-          widget.entries.isEmpty ? 0 : widget.entries.length - 1,
-        );
-      }
-    }
     final allowPreload = !_isScrollActive;
     if (!force &&
         _lastFirst == first &&
@@ -1299,33 +1279,6 @@ class _GridBodyState extends State<_GridBody> {
     _lastFirst = first;
     _lastLast = last;
     _lastAllowPreload = allowPreload;
-    AppLogger.log(
-      'grid viewport',
-      scope: 'thumb_diag',
-      details: {
-        'force': force,
-        'entries': widget.entries.length,
-        'offset': offset.toStringAsFixed(1),
-        'extent': extent.toStringAsFixed(1),
-        'mediaW': mediaW.toStringAsFixed(1),
-        'layoutW': layoutW?.toStringAsFixed(1) ?? '',
-        'usedWidth': width.toStringAsFixed(1),
-        'cell': cell.toStringAsFixed(1),
-        'rowH': rowH.toStringAsFixed(1),
-        'firstRow': firstRow,
-        'lastRow': lastRow,
-        'first': first,
-        'last': last,
-        'altCell': altCell?.toStringAsFixed(1) ?? '',
-        'altLast': altLast ?? -1,
-        'indexGap': altLast == null ? -1 : (altLast - last),
-        'allowPreload': allowPreload,
-        'scrollBias': _scrollBias,
-        'isSelf': cubit.isSelf,
-        'rootId': cubit.state.rootId,
-        'category': cubit.state.category.name,
-      },
-    );
     cubit.requestVisibleThumbs(
       entries: widget.entries,
       firstIndex: first,

@@ -297,8 +297,7 @@ class _ShareLocationSheetState extends State<_ShareLocationSheet> {
   String? _defaultPath;
 
   /// `/Download` 之前的部分，输入框里不显示。
-  String _downloadPrefix =
-      AppPlatform.isWindows ? '' : '/storage/emulated/0/';
+  String _downloadPrefix = '';
 
   late final TextEditingController _pathController;
   late final FocusNode _pathFocus;

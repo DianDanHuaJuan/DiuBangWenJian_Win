@@ -210,7 +210,7 @@ class DavGetHandler {
       };
 }
 
-/// PUT /dav/name 或 /dav/rootId/name —— 写入共享根四分类（rootId 忽略）。
+/// PUT /dav/name 或 /dav/rootId/name —— 写入当前共享根（默认根四分类 / 换根顶层；rootId 忽略）。
 class DavPutHandler {
   DavPutHandler({required this.receiveFile});
 

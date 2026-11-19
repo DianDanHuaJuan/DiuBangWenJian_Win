@@ -44,20 +44,12 @@ class DesktopRuntimeController with WindowListener {
   bool get launchAtStartupEnabled =>
       _store?.getBool(kvLaunchAtStartup) ?? true;
 
-  /// 托盘图标绝对路径（不依赖 CWD；优先 flutter_assets / 旁路 ico）。
+  /// 托盘图标绝对路径（不依赖 CWD；与窗口 ico 同为铥棒绿标）。
   static String? resolveTrayIconPath() {
     if (!Platform.isWindows) return null;
     final executable = Platform.resolvedExecutable;
     final executableDir = path.dirname(executable);
     final candidates = <String>[
-      path.join(executableDir, 'app_icon.ico'),
-      path.join(
-        executableDir,
-        'data',
-        'flutter_assets',
-        'assets',
-        'app_icon.ico',
-      ),
       path.join(
         executableDir,
         'data',
@@ -68,6 +60,7 @@ class DesktopRuntimeController with WindowListener {
         'app_icon.ico',
       ),
       path.join(executableDir, 'resources', 'app_icon.ico'),
+      path.join(executableDir, 'app_icon.ico'),
       path.join(
         Directory.current.path,
         'windows',
@@ -75,7 +68,6 @@ class DesktopRuntimeController with WindowListener {
         'resources',
         'app_icon.ico',
       ),
-      path.join(Directory.current.path, 'assets', 'app_icon.ico'),
       path.normalize(
         path.join(
           executableDir,

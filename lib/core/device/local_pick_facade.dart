@@ -6,7 +6,6 @@ import 'package:path/path.dart' as p;
 import '../storage/mime_types.dart';
 import 'device_file_service.dart';
 import 'local_media_picker.dart';
-import 'permission_service.dart';
 
 /// 统一本地选取结果（聊天互传 / NAS 上传共用）。
 class LocalPickFacadeResult {
@@ -28,16 +27,11 @@ class LocalPickFacade {
   LocalPickFacade({
     DeviceFileService? deviceFiles,
     LocalMediaPicker? mediaPicker,
-    PermissionService? permissions,
   })  : _deviceFiles = deviceFiles ?? DeviceFileService(),
-        _mediaPicker = mediaPicker ?? const LocalMediaPicker(),
-        _permissions = permissions ?? PermissionService();
+        _mediaPicker = mediaPicker ?? const LocalMediaPicker();
 
   final DeviceFileService _deviceFiles;
   final LocalMediaPicker _mediaPicker;
-  final PermissionService _permissions;
-
-  PermissionService get permissions => _permissions;
 
   /// 相册多选（图+视频）。
   Future<LocalPickFacadeResult> pickMedia(

@@ -353,7 +353,7 @@ class MkdirHandler {
   }
 }
 
-/// PUT /api/v1/files/upload?name= —— 流式写入共享根四分类（按文件名归类）。
+/// PUT /api/v1/files/upload?name= —— 共享根落盘（默认根四分类 / 换根顶层 / dir=当前目录）。
 class FileUploadHandler {
   static const path = NasApiPaths.filesUpload;
 
@@ -366,6 +366,7 @@ class FileUploadHandler {
   final Future<({IOSink sink, ShareWriteResult result})> Function({
     required String preferredFileName,
     int? expectedLength,
+    String directory,
   }) openReceiveSink;
 
   final Future<void> Function(String absolutePath) notifyWritten;
@@ -381,6 +382,7 @@ class FileUploadHandler {
         }
         final fileName = p.basename(name);
         final rootId = request.url.queryParameters['rootId'] ?? '';
+        final directory = request.url.queryParameters['dir'] ?? '';
         final expectedLength =
             request.contentLength != null && request.contentLength! > 0
                 ? request.contentLength
@@ -395,7 +397,7 @@ class FileUploadHandler {
           try {
             final stored = await browser.writeFileFromStream(
               volumePath: vol,
-              relativeDir: request.url.queryParameters['dir'] ?? '',
+              relativeDir: directory,
               fileName: fileName,
               stream: request.read(),
               expectedLength: expectedLength,
@@ -425,6 +427,7 @@ class FileUploadHandler {
           final opened = await openReceiveSink(
             preferredFileName: fileName,
             expectedLength: expectedLength,
+            directory: directory,
           );
           sink = opened.sink;
           written = opened.result;

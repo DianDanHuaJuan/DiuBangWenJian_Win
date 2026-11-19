@@ -338,7 +338,7 @@ class GridThumbnailCache extends ChangeNotifier {
       _queue.add(j);
       _queuedKeys.add(j.key);
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       'cache apply',
       scope: 'thumb_diag',
       details: {
@@ -389,7 +389,7 @@ class GridThumbnailCache extends ChangeNotifier {
       if (peek(job.key) != null) continue;
       if (_inflight.containsKey(job.key)) continue;
       _running++;
-      AppLogger.log(
+      AppLogger.logVerbose(
         'cache fetch start',
         scope: 'thumb_diag',
         details: {
@@ -415,7 +415,7 @@ class GridThumbnailCache extends ChangeNotifier {
           }
           _failedUntil.remove(job.key);
           if (!_updates.isClosed) _updates.add(job.key);
-          AppLogger.log(
+          AppLogger.logVerbose(
             'cache fetch ok',
             scope: 'thumb_diag',
             details: {
@@ -427,7 +427,7 @@ class GridThumbnailCache extends ChangeNotifier {
           );
         } else {
           _markFailed(job.key, retryable: false);
-          AppLogger.log(
+          AppLogger.logVerbose(
             'cache fetch empty',
             scope: 'thumb_diag',
             details: {

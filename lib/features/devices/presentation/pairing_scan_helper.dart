@@ -8,12 +8,6 @@ import '../../../core/network/peer_address.dart';
 import '../data/datasources/pairing_remote_data_source.dart';
 import 'cubits/pairing_flow_cubit.dart';
 import 'peer_landing.dart';
-import 'widgets/pairing_sheet.dart';
-
-/// Windows 首版无摄像头扫码：改为打开配对弹层（二维码 / 密码）。
-Future<void> pairByScanningQr(BuildContext context) {
-  return showPairingSheet(context, preferredMode: PairingSheetMode.qrShow);
-}
 
 /// 右上角「密码连接」：先选定附近的一台设备，再只向它提交密码。
 Future<void> pairByPassword(BuildContext context) async {

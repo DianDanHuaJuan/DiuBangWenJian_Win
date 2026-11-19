@@ -93,7 +93,9 @@ class StorageVolumesHandler {
             error: e,
             stackTrace: st,
           );
-          await StorageAccessDiagnostics.logSnapshot('volumes_handler_500');
+          if (AppLogger.verboseExtvol) {
+            await StorageAccessDiagnostics.logSnapshot('volumes_handler_500');
+          }
           return Response.internalServerError(
             body: 'list volumes failed: $e',
             headers: {'content-type': 'text/plain; charset=utf-8'},
@@ -233,9 +235,11 @@ class FileListHandler {
             stackTrace: st,
             details: {'rootId': rootId, 'path': relPath},
           );
-          await StorageAccessDiagnostics.logSnapshot(
-            'files_list_500:$rootId',
-          );
+          if (AppLogger.verboseExtvol) {
+            await StorageAccessDiagnostics.logSnapshot(
+              'files_list_500:$rootId',
+            );
+          }
           return Response.internalServerError(
             body: 'file list failed: $e',
             headers: {'content-type': 'text/plain; charset=utf-8'},
@@ -269,7 +273,9 @@ class FileListHandler {
         scope: 'extvol_diag',
         details: {'volPath': volPath, 'rootId': rootId},
       );
-      await StorageAccessDiagnostics.logSnapshot('extvol_not_mounted');
+      if (AppLogger.verboseExtvol) {
+        await StorageAccessDiagnostics.logSnapshot('extvol_not_mounted');
+      }
       return Response.notFound('external volume not mounted');
     }
     if (relPath.isNotEmpty &&
@@ -359,7 +365,9 @@ class FileListHandler {
         stackTrace: st,
         details: {'volPath': volPath, 'path': relPath, 'rootId': rootId},
       );
-      await StorageAccessDiagnostics.logSnapshot('extvol_list_failed');
+      if (AppLogger.verboseExtvol) {
+        await StorageAccessDiagnostics.logSnapshot('extvol_list_failed');
+      }
       rethrow;
     }
   }
@@ -598,7 +606,11 @@ class FileContentHandler {
               stackTrace: st,
               details: {'volPath': volPath, 'path': rel},
             );
-            await StorageAccessDiagnostics.logSnapshot('extvol_content_failed');
+            if (AppLogger.verboseExtvol) {
+              await StorageAccessDiagnostics.logSnapshot(
+                'extvol_content_failed',
+              );
+            }
             rethrow;
           }
         }

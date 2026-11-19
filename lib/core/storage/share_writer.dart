@@ -33,6 +33,8 @@ class ShareWriter {
   final StorageRootStore _roots;
   final Future<int?> Function(String dirPath) _freeBytesReader;
 
+  StorageRootStore get rootStore => _roots;
+
   /// 将 [bytes] 写入当前共享根；重名自动加后缀。
   ///
   /// [relativeDir] 为根下相对子目录（如 `图片`），禁止 `..` / 绝对路径。

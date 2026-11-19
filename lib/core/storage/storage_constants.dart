@@ -1,7 +1,7 @@
 /// 共享存储常量（决策 #14：默认 Download/diubangfiles，无自动切盘）。
 ///
-/// 正式接收/下载落点：`{根}/图片|视频|文档|其他/`（见 [ShareReceivePaths]）。
-/// 目录名 [folderName] 仅 ASCII：避免部分机型/MediaStore/跨端路径编码问题。
+/// 正式落盘：默认安装根按四分类；换根后顶层；目录模式写当前 dir（见 [ShareReceivePaths]）。
+/// 四分类空目录仅在首次创建默认根时建一次。
 abstract final class StorageConstants {
   /// 共享根文件夹名（默认仅落在公共 Download 下）。
   static const folderName = 'diubangfiles';

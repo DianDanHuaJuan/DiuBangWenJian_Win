@@ -11,7 +11,6 @@ import '../common/app_logger.dart';
 import '../network/peer_api_client.dart';
 import '../protocol/nas_api_paths.dart';
 import '../storage/incomplete_file.dart';
-import '../storage/media_scanner.dart';
 import '../storage/share_receive_paths.dart';
 import '../storage/share_writer.dart';
 import '../task/transfer_task.dart';
@@ -30,16 +29,13 @@ class NasTransferService {
     required Future<TransferTaskStore> Function() tasks,
     required PeerApiClient api,
     required ShareWriter writer,
-    MediaScanner? mediaScanner,
   })  : _tasksFn = tasks,
         _api = api,
-        _writer = writer,
-        _scanner = mediaScanner ?? MediaScanner();
+        _writer = writer;
 
   final Future<TransferTaskStore> Function() _tasksFn;
   final PeerApiClient _api;
   final ShareWriter _writer;
-  final MediaScanner _scanner;
 
   final List<void Function()> _listeners = [];
 
@@ -290,10 +286,14 @@ class NasTransferService {
 
     String? destPath;
     try {
+      final root = await _writer.rootStore.ensureCurrent();
       final opened = await _writer.openWriteSink(
         preferredFileName: task.fileName,
         expectedLength: task.sizeBytes > 0 ? task.sizeBytes : null,
-        relativeDir: ShareReceivePaths.relativeDirFor(fileName: task.fileName),
+        relativeDir: ShareReceivePaths.relativeDirForReceive(
+          root: root,
+          fileName: task.fileName,
+        ),
       );
       await opened.sink.close();
       destPath = opened.result.absolutePath;
@@ -360,7 +360,6 @@ class NasTransferService {
           _notify();
         },
       );
-      await _scanner.scanPath(dest.path);
       _liveBytes[task.id] = downloaded;
       await store.updateState(
         task.id,

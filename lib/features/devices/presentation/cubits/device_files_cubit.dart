@@ -275,7 +275,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       return false;
     }
     if (entry.isVideo) {
-      AppLogger.log(
+      AppLogger.logVerbose(
         'openMediaPreview video',
         scope: 'video_diag',
         details: {
@@ -384,7 +384,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   }
 
   Future<void> _probeBrowsableVolumes({required bool allowFallback}) async {
-    AppLogger.log(
+    AppLogger.logVerbose(
       'probeBrowsableVolumes start',
       scope: 'extvol_diag',
       details: {
@@ -397,7 +397,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     final vols = isSelf
         ? await _externalBrowser.listBrowsableVolumes()
         : await _listRemoteBrowsableVolumes();
-    AppLogger.log(
+    AppLogger.logVerbose(
       'probeBrowsableVolumes done',
       scope: 'extvol_diag',
       details: {
@@ -445,13 +445,13 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   Future<List<StorageVolumeInfo>> _listRemoteBrowsableVolumes() async {
     final id = peerId;
     if (id == null || id.isEmpty) {
-      AppLogger.log(
+      AppLogger.logVerbose(
         'listRemoteBrowsableVolumes skip empty peerId',
         scope: 'extvol_diag',
       );
       return const [];
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       'listRemoteBrowsableVolumes GET /storage/volumes',
       scope: 'extvol_diag',
       details: {'peerId': id},
@@ -487,7 +487,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
         .map((e) => StorageVolumeInfo.fromMap(e))
         .where((v) => v.path.isNotEmpty)
         .toList(growable: false);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'listRemoteBrowsableVolumes parsed',
       scope: 'extvol_diag',
       details: {
@@ -518,16 +518,11 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
 
   Future<void> setAccessMode(BrowseAccessMode mode) async {
     if (mode == BrowseAccessMode.directoryTree) {
-      AppLogger.log(
+      AppLogger.logVerbose(
         'setAccessMode → directoryTree',
         scope: 'extvol_diag',
         details: {'isSelf': isSelf, 'peerId': peerId ?? ''},
       );
-      if (isSelf) {
-        try {
-          await serviceLocator.permissionService().requestAllStorageForNas();
-        } catch (_) {}
-      }
       try {
         await _probeBrowsableVolumes(allowFallback: false);
       } catch (e) {
@@ -576,7 +571,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
   /// 「根目录」：Windows = 各磁盘列表；清空卷内路径。
   Future<void> goToVolumeRoot() async {
     if (!state.isDirectoryTree) return;
-    AppLogger.log(
+    AppLogger.logVerbose(
       'goToVolumeRoot → volumePicker',
       scope: 'extvol_diag',
       details: {'isSelf': isSelf, 'vols': state.externalVolumes.length},
@@ -639,7 +634,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
     final rootId = volume.rootId.isNotEmpty
         ? volume.rootId
         : _externalBrowser.rootIdFor(volPath);
-    AppLogger.log(
+    AppLogger.logVerbose(
       'selectExternalVolume',
       scope: 'extvol_diag',
       details: {
@@ -750,7 +745,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
           absolutePath: v.path,
         ),
     ];
-    AppLogger.log(
+    AppLogger.logVerbose(
       '_refreshDirectoryTree volumePicker',
       scope: 'extvol_diag',
       details: {
@@ -787,7 +782,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       await _refreshDirectoryTreeVolumePicker();
       return;
     }
-    AppLogger.log(
+    AppLogger.logVerbose(
       '_refreshDirectoryTree volume',
       scope: 'extvol_diag',
       details: {
@@ -1140,7 +1135,7 @@ class DeviceFilesCubit extends Cubit<DeviceFilesState>
       return;
     }
 
-    AppLogger.log(
+    AppLogger.logVerbose(
       'openEntry → refresh with entry path',
       scope: 'extvol_diag',
       details: {
